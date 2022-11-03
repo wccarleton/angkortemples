@@ -56,7 +56,7 @@ templeCode <- nimbleCode({
         for(j in 3:J){
             x[n, j] ~ dbern(theta[j - 2]) # hot-encoded covariates
         }
-        temple_age[n] ~ dnorm(beta0 + morph_delta[morpho[n]] + inprod(beta[1:J], x[n, 1:J]), sd = sigma) # core model
+        temple_age[n] ~ dnorm(beta0 + morph_delta[morph[n]] + inprod(beta[1:J], x[n, 1:J]), sd = sigma) # core model
     }
 })
 
