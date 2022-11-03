@@ -96,10 +96,18 @@ mcmc_out <- nimbleMCMC(model = temple,
                         summary = T,
                         WAIC = T)
 
+
+# MAE (AAE, MAD) loss function for cv
+MADlossFunction <- function(simulatedDataValues, actualDataValues){
+  MAD <- mean(abs(simulatedDataValues - actualDataValues))
+  return(MAD)
+}
+
 cv_config <- configureMCMC(model = temple)
 
 cv_out <- runCrossValidate(MCMCconfiguration = cv_config,
-                            k = 10,
+                            k = 5,
+                            lossFunction = MADlossFunction,
                             MCMCcontrol = list(niter = 20000, nburnin = 2000),
                             nCores = 1,
                             nBootReps = NA)
