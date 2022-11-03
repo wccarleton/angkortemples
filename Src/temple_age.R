@@ -5,8 +5,8 @@ library(tidyr)
 library(dplyr)
 
 # pull in raw data
-temple_known_dates <- read.csv("./data/temple_known_dates.csv", as.is = T)
-temple_vars <- read.csv("./data/temple_vars.csv", as.is = T)
+temple_known_dates <- read.csv("./Data/temple_known_dates.csv", as.is = T)
+temple_vars <- read.csv("./Data/temple_vars.csv", as.is = T)
 
 # collate: raw is in two separate tables that can be combined for easier use and then only required variables isolated and combined into a single working dataframe
 t_dates <- data.frame(id = temple_known_dates$id,
@@ -22,6 +22,18 @@ t_vars <- data.frame(id = temple_vars$Temple.ID,
                     trait_6 = temple_vars$Brick,
                     trait_7 = temple_vars$Thmaphnom,
                     trait_8 = temple_vars$other)
+
+# clean up the morphology variable
+#temple_vars[grep("(east)", temple_vars$Morphology), "Morphology"] <- "horseshoe_east"
+#temple_vars[grep("(north)", temple_vars$Morphology), "Morphology"] <- "horseshoe_north"
+#temple_vars[grep("(west)", temple_vars$Morphology), "Morphology"] <- "horseshoe_west"
+#temple_vars[grep("4causeway", temple_vars$Morphology), "Morphology"] <- "causeway_4"
+#temple_vars[grep("2causeway", temple_vars$Morphology), "Morphology"] <- "causeway_2"
+#temple_vars[grep("Square", temple_vars$Morphology), "Morphology"] <- "square"
+#temple_vars[which(temple_vars$Morphology == ""), "Morphology"] <- NA
+
+#unique(temple_vars$Morphology)
+
 # merge the two dataframesusing the id column to match while ensuring all of the rows in the vars dataframe are included
 temples <- right_join(t_dates, t_vars, by = "id")
 
@@ -36,7 +48,7 @@ templeCode <- nimbleCode({
         theta[j] ~ dbeta(a[j], b[j]) # prior for hot-encoded vars
     }
     for(n in 1:N){
-        x[n, 1] ~ dunif(min = 1, max = 360) # azimuth
+        x[n, 1] ~ dunif(min = 1, max = 180) # azimuth
         x[n, 2] ~ dlnorm(meanlog = 8, sdlog = 1.03) # area
         for(j in 3:J){
             x[n, j] ~ dbern(theta[j - 2]) # hot-encoded covariates
@@ -71,6 +83,14 @@ temple <- nimbleModel(code = templeCode,
                 constants = templeConsts,
                 data = templeData,
                 inits = templeInits)
+
+cv_config <- configureMCMC(model = temple)
+
+cv_out <- runCrossValidate(MCMCconfiguration = cv_config,
+                            k = nrow(temples_known),
+                            #MCMCcontrol = list(niter = 20000),
+                            nCores = 10,
+                            nBootReps = NA)
 
 mcmc_out <- nimbleMCMC(model = temple,
                         niter = 20000,
