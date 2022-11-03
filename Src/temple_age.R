@@ -43,7 +43,7 @@ templeCode <- nimbleCode({
     for(j in 1:J){
         beta[j] ~ dnorm(0, sd = 100) # regression coefs
     }
-    sigma ~ dunif(50, 200) # prior variance for regression model
+    sigma ~ dunif(0, 150) # prior variance for regression model
     for(j in 1:(J - 2)){
         theta[j] ~ dbeta(a[j], b[j]) # prior for hot-encoded vars
     }
@@ -53,7 +53,7 @@ templeCode <- nimbleCode({
         for(j in 3:J){
             x[n, j] ~ dbern(theta[j - 2]) # hot-encoded covariates
         }
-        temple_age[n] ~ dnorm(beta0 + inprod(beta[1:J], x[n, 1:J]), sd = sigma) # core regression model
+        temple_age[n] ~ dnorm(beta0 + inprod(beta[1:J], x[n, 1:J]), sd = sigma) # core model
     }
 })
 
@@ -65,13 +65,15 @@ names(temples)
 # subset only temples with known dates
 temples_known <- subset(temples, !is.na(year_ce))
 
+temples_complete <- temples_known[complete.cases(temples_known), ]
+
 templeConsts <- list(a = rep(1, 8),
                     b = rep(1, 8),
-                    N = nrow(temples_known),
+                    N = nrow(temples_complete),
                     J = 10)
 
-templeData <- list(temple_age = temples_known$year_ce,
-                    x = temples_known[, c(3:12)])
+templeData <- list(temple_age = temples_complete$year_ce,
+                    x = temples_complete[, c(3:12)])
 
 templeInits <- list(theta = rep(0.5, 8),
                     beta0 = 0,
@@ -87,17 +89,15 @@ temple <- nimbleModel(code = templeCode,
 cv_config <- configureMCMC(model = temple)
 
 cv_out <- runCrossValidate(MCMCconfiguration = cv_config,
-                            k = nrow(temples_known),
+                            k = 10,
                             MCMCcontrol = list(niter = 20000, nburnin = 2000),
-                            nCores = 10,
+                            nCores = 1,
                             nBootReps = NA)
 
 mcmc_out <- nimbleMCMC(model = temple,
                         niter = 20000,
                         summary = T,
                         WAIC = T)
-
-colnames(mcmc_out$samples)[1:25]
 
 traceplot(mcmc(mcmc_out$samples[, 11]))
 
