@@ -39,6 +39,9 @@ temples <- right_join(t_dates, t_vars, by = "id")
 # set up a Nimble model
 templeCode <- nimbleCode({
     beta0 ~ dnorm(0, sd = 100) # intercept
+    for(m in 1:M){
+        morph_delta[m] ~ dnorm(0, sd = 100)
+    }
     for(j in 1:J){
         beta[j] ~ dnorm(0, sd = 100) # regression coefs
     }
@@ -47,12 +50,13 @@ templeCode <- nimbleCode({
         theta[j] ~ dbeta(a[j], b[j]) # prior for hot-encoded vars
     }
     for(n in 1:N){
+        morph[n] ~ dcat(prob = morph_prob[1:M]) # morpho types
         x[n, 1] ~ dunif(min = 1, max = 180) # azimuth
         x[n, 2] ~ dlnorm(meanlog = 8, sdlog = 1.03) # area
         for(j in 3:J){
             x[n, j] ~ dbern(theta[j - 2]) # hot-encoded covariates
         }
-        temple_age[n] ~ dnorm(beta0 + inprod(beta[1:J], x[n, 1:J]), sd = sigma) # core model
+        temple_age[n] ~ dnorm(beta0 + morph_delta[morpho[n]] + inprod(beta[1:J], x[n, 1:J]), sd = sigma) # core model
     }
 })
 
@@ -62,15 +66,21 @@ temples_known <- subset(temples, !is.na(year_ce))
 # subset only complete cases
 temples_complete <- temples_known[complete.cases(temples_known), ]
 
-templeConsts <- list(a = rep(1, 8),
+M <- length(levels(temples$morph))
+
+templeConsts <- list(a = rep(1, 8), # a,b are the parameters of the hot-encoded probability priors and these are naive
                     b = rep(1, 8),
+                    morph_prob = rep(1 / M, M), # prob of observing morpho types---this is naive
                     N = nrow(temples_complete),
+                    M = M,
                     J = 10)
 
 templeData <- list(temple_age = temples_complete$year_ce,
-                    x = temples_complete[, c(3:12)])
+                    x = temples_complete[, c(4:13)],
+                    morph = as.numeric(temples_complete$morph))
 
 templeInits <- list(theta = rep(0.5, 8),
+                    morph_delta = rep(0, M),
                     beta0 = 0,
                     beta = rep(0, 10),
                     sigma = 100)
