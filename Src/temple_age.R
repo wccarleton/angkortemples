@@ -88,7 +88,7 @@ cv_config <- configureMCMC(model = temple)
 
 cv_out <- runCrossValidate(MCMCconfiguration = cv_config,
                             k = nrow(temples_known),
-                            #MCMCcontrol = list(niter = 20000),
+                            MCMCcontrol = list(niter = 20000, nburnin = 2000),
                             nCores = 10,
                             nBootReps = NA)
 
