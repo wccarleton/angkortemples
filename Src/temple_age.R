@@ -8,10 +8,20 @@ library(dplyr)
 temple_known_dates <- read.csv("./Data/temple_known_dates.csv", as.is = T)
 temple_vars <- read.csv("./Data/temple_vars.csv", as.is = T)
 
+# clean up the morphology variable
+temple_vars[grep("(east)", temple_vars$Morphology), "Morphology"] <- "horseshoe_east"
+temple_vars[grep("(north)", temple_vars$Morphology), "Morphology"] <- "horseshoe_north"
+temple_vars[grep("(west)", temple_vars$Morphology), "Morphology"] <- "horseshoe_west"
+temple_vars[grep("4causeway", temple_vars$Morphology), "Morphology"] <- "causeway_4"
+temple_vars[grep("2causeway", temple_vars$Morphology), "Morphology"] <- "causeway_2"
+temple_vars[grep("Square", temple_vars$Morphology), "Morphology"] <- "square"
+temple_vars[which(temple_vars$Morphology == ""), "Morphology"] <- NA
+
 # collate: raw is in two separate tables that can be combined for easier use and then only required variables isolated and combined into a single working dataframe
 t_dates <- data.frame(id = temple_known_dates$id,
                     year_ce = temple_known_dates$Date.to.use)
 t_vars <- data.frame(id = temple_vars$Temple.ID,
+                    morph = as.factor(temple_vars$Morphology),
                     azimuth = temple_vars$Azimuth,
                     area = log(temple_vars$Area),
                     trait_1 = temple_vars$Principle.Reservoir,
@@ -22,17 +32,6 @@ t_vars <- data.frame(id = temple_vars$Temple.ID,
                     trait_6 = temple_vars$Brick,
                     trait_7 = temple_vars$Thmaphnom,
                     trait_8 = temple_vars$other)
-
-# clean up the morphology variable
-#temple_vars[grep("(east)", temple_vars$Morphology), "Morphology"] <- "horseshoe_east"
-#temple_vars[grep("(north)", temple_vars$Morphology), "Morphology"] <- "horseshoe_north"
-#temple_vars[grep("(west)", temple_vars$Morphology), "Morphology"] <- "horseshoe_west"
-#temple_vars[grep("4causeway", temple_vars$Morphology), "Morphology"] <- "causeway_4"
-#temple_vars[grep("2causeway", temple_vars$Morphology), "Morphology"] <- "causeway_2"
-#temple_vars[grep("Square", temple_vars$Morphology), "Morphology"] <- "square"
-#temple_vars[which(temple_vars$Morphology == ""), "Morphology"] <- NA
-
-#unique(temple_vars$Morphology)
 
 # merge the two dataframesusing the id column to match while ensuring all of the rows in the vars dataframe are included
 temples <- right_join(t_dates, t_vars, by = "id")
@@ -104,3 +103,17 @@ traceplot(mcmc(mcmc_out$samples[, 11]))
 hist(mcmc_out$samples[-c(1:1000), 2])
 
 pairs(mcmc_out$samples[-c(1:1000), c(1:9)])
+
+# simple lm for comparison
+lm_temples <- lm(year_ce ~
+                morph +
+                azimuth + 
+                area + 
+                trait_1 + 
+                trait_2 + 
+                trait_3 + 
+                trait_4 + 
+                trait_5 + 
+                trait_6 + 
+                trait_8, 
+                data = temples_complete)
