@@ -56,14 +56,10 @@ templeCode <- nimbleCode({
     }
 })
 
-# have a look again at temples dataframe variables
-names(temples)
-
-# note there are 7 hot-encoded vars in the dataframe and 1 other continuous (bounded) covariate (azimuth)
-
 # subset only temples with known dates
 temples_known <- subset(temples, !is.na(year_ce))
 
+# subset only complete cases
 temples_complete <- temples_known[complete.cases(temples_known), ]
 
 templeConsts <- list(a = rep(1, 8),
