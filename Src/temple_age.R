@@ -91,6 +91,11 @@ temple <- nimbleModel(code = templeCode,
                 data = templeData,
                 inits = templeInits)
 
+mcmc_out <- nimbleMCMC(model = temple,
+                        niter = 20000,
+                        summary = T,
+                        WAIC = T)
+
 cv_config <- configureMCMC(model = temple)
 
 cv_out <- runCrossValidate(MCMCconfiguration = cv_config,
@@ -98,11 +103,6 @@ cv_out <- runCrossValidate(MCMCconfiguration = cv_config,
                             MCMCcontrol = list(niter = 20000, nburnin = 2000),
                             nCores = 1,
                             nBootReps = NA)
-
-mcmc_out <- nimbleMCMC(model = temple,
-                        niter = 20000,
-                        summary = T,
-                        WAIC = T)
 
 traceplot(mcmc(mcmc_out$samples[, 11]))
 
