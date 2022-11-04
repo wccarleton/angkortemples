@@ -43,15 +43,15 @@ templeCode <- nimbleCode({
         beta[j] ~ dnorm(0, sd = 1000) # regression coefs
     }
     sigma ~ dunif(0, 150) # prior variance for regression model
-    #for(j in 1:(J - 2)){
-    #    theta[j] ~ dbeta(a[j], b[j]) # prior for hot-encoded vars
-    #}
+    for(j in 1:(J - 2)){
+        theta[j] ~ dbeta(a[j], b[j]) # prior for hot-encoded vars
+    }
     for(n in 1:N){
-        #x[n, 1] ~ dunif(min = 1, max = 360) # azimuth
-        #x[n, 2] ~ dlnorm(meanlog = 8, sdlog = 1.03) # area
-        #for(j in 3:J){
-        #    x[n, j] ~ dbern(theta[j - 2]) # hot-encoded covariates
-        #}
+        x[n, 1] ~ dunif(min = 1, max = 360) # azimuth
+        x[n, 2] ~ dlnorm(meanlog = 0, sdlog = 100) # area
+        for(j in 3:J){
+            x[n, j] ~ dbern(theta[j - 2]) # hot-encoded covariates
+        }
         temple_age[n] ~ dnorm(beta0 + inprod(beta[1:J], x[n, 1:J]), sd = sigma) # core model
     }
 })
@@ -70,15 +70,15 @@ temples_onehot_morph <- pivot_wider(temples_complete,
 
 # M <- length(levels(temples$morph))
 
-templeConsts <- list(#a = rep(1, 13), # a,b are the parameters of the hot-encoded probability priors and these are naive
-                    #b = rep(1, 13),
+templeConsts <- list(a = rep(1, 12), # a,b are the parameters of the hot-encoded probability priors and these are naive
+                    b = rep(1, 12),
                     N = nrow(temples_onehot_morph),
                     J = 14) # predictors (less the dropped morph one_hot column)
 
 templeData <- list(temple_age = temples_onehot_morph$year_ce,
                     x = temples_onehot_morph[, c(3:10, 12:17)]) # last column dropped b/c of collinearity in one_hot morph
 
-templeInits <- list(#theta = rep(0.5, 12),
+templeInits <- list(theta = rep(0.5, 12),
                     beta0 = 0,
                     beta = rep(0, 14),
                     sigma = 100)
@@ -133,7 +133,7 @@ lm_temples <- lm(year_ce ~
 # more directly comparable
 lm_temples <- lm(year_ce ~
                 azimuth + 
-                log(area) + 
+                area + 
                 trait_1 + 
                 trait_2 + 
                 trait_3 + 
