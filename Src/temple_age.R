@@ -93,6 +93,7 @@ temple <- nimbleModel(code = templeCode,
 
 mcmc_out <- nimbleMCMC(model = temple,
                         niter = 20000,
+                        nburnin = 2000,
                         summary = T,
                         WAIC = T)
 
@@ -106,7 +107,7 @@ MADlossFunction <- function(simulatedDataValues, actualDataValues){
 cv_config <- configureMCMC(model = temple)
 
 cv_out <- runCrossValidate(MCMCconfiguration = cv_config,
-                            k = 5,
+                            k = nrow(temples_complete),
                             lossFunction = MADlossFunction,
                             MCMCcontrol = list(niter = 20000, nburnin = 2000),
                             nCores = 1,
@@ -122,7 +123,7 @@ pairs(mcmc_out$samples[-c(1:1000), c(1:9)])
 lm_temples <- lm(year_ce ~
                 morph +
                 azimuth + 
-                area + 
+                log(area) + 
                 trait_1 + 
                 trait_2 + 
                 trait_3 + 
