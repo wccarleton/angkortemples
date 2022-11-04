@@ -38,25 +38,21 @@ temples <- right_join(t_dates, t_vars, by = "id")
 
 # set up a Nimble model
 templeCode <- nimbleCode({
-    beta0 ~ dnorm(0, sd = 100) # intercept
-    for(m in 1:M){
-        morph_delta[m] ~ dnorm(0, sd = 100)
-    }
+    beta0 ~ dnorm(0, sd = 1000) # intercept
     for(j in 1:J){
-        beta[j] ~ dnorm(0, sd = 100) # regression coefs
+        beta[j] ~ dnorm(0, sd = 1000) # regression coefs
     }
     sigma ~ dunif(0, 150) # prior variance for regression model
-    for(j in 1:(J - 2)){
-        theta[j] ~ dbeta(a[j], b[j]) # prior for hot-encoded vars
-    }
+    #for(j in 1:(J - 2)){
+    #    theta[j] ~ dbeta(a[j], b[j]) # prior for hot-encoded vars
+    #}
     for(n in 1:N){
-        morph[n] ~ dcat(prob = morph_prob[1:M]) # morpho types
-        x[n, 1] ~ dunif(min = 1, max = 180) # azimuth
-        x[n, 2] ~ dlnorm(meanlog = 8, sdlog = 1.03) # area
-        for(j in 3:J){
-            x[n, j] ~ dbern(theta[j - 2]) # hot-encoded covariates
-        }
-        temple_age[n] ~ dnorm(beta0 + morph_delta[morph[n]] + inprod(beta[1:J], x[n, 1:J]), sd = sigma) # core model
+        #x[n, 1] ~ dunif(min = 1, max = 360) # azimuth
+        #x[n, 2] ~ dlnorm(meanlog = 8, sdlog = 1.03) # area
+        #for(j in 3:J){
+        #    x[n, j] ~ dbern(theta[j - 2]) # hot-encoded covariates
+        #}
+        temple_age[n] ~ dnorm(beta0 + inprod(beta[1:J], x[n, 1:J]), sd = sigma) # core model
     }
 })
 
@@ -66,23 +62,25 @@ temples_known <- subset(temples, !is.na(year_ce))
 # subset only complete cases
 temples_complete <- temples_known[complete.cases(temples_known), ]
 
-M <- length(levels(temples$morph))
+temples_onehot_morph <- pivot_wider(temples_complete, 
+                                    names_from = morph, 
+                                    values_from = morph, 
+                                    values_fill = 0, 
+                                    values_fn = function(x)as.numeric(!is.na(x)))
 
-templeConsts <- list(a = rep(1, 8), # a,b are the parameters of the hot-encoded probability priors and these are naive
-                    b = rep(1, 8),
-                    morph_prob = rep(1 / M, M), # prob of observing morpho types---this is naive
-                    N = nrow(temples_complete),
-                    M = M,
-                    J = 10)
+# M <- length(levels(temples$morph))
 
-templeData <- list(temple_age = temples_complete$year_ce,
-                    x = temples_complete[, c(4:13)],
-                    morph = as.numeric(temples_complete$morph))
+templeConsts <- list(#a = rep(1, 13), # a,b are the parameters of the hot-encoded probability priors and these are naive
+                    #b = rep(1, 13),
+                    N = nrow(temples_onehot_morph),
+                    J = 14) # predictors (less the dropped morph one_hot column)
 
-templeInits <- list(theta = rep(0.5, 8),
-                    morph_delta = rep(0, M),
+templeData <- list(temple_age = temples_onehot_morph$year_ce,
+                    x = temples_onehot_morph[, c(3:10, 12:17)]) # last column dropped b/c of collinearity in one_hot morph
+
+templeInits <- list(#theta = rep(0.5, 12),
                     beta0 = 0,
-                    beta = rep(0, 10),
+                    beta = rep(0, 14),
                     sigma = 100)
 
 temple <- nimbleModel(code = templeCode,
@@ -92,11 +90,10 @@ temple <- nimbleModel(code = templeCode,
                 inits = templeInits)
 
 mcmc_out <- nimbleMCMC(model = temple,
-                        niter = 20000,
+                        niter = 40000,
                         nburnin = 2000,
                         summary = T,
                         WAIC = T)
-
 
 # MAE (AAE, MAD) loss function for cv
 MADlossFunction <- function(simulatedDataValues, actualDataValues){
@@ -132,3 +129,23 @@ lm_temples <- lm(year_ce ~
                 trait_6 + 
                 trait_8, 
                 data = temples_complete)
+
+# more directly comparable
+lm_temples <- lm(year_ce ~
+                azimuth + 
+                log(area) + 
+                trait_1 + 
+                trait_2 + 
+                trait_3 + 
+                trait_4 + 
+                trait_5 + 
+                trait_6 + 
+                trait_8 +
+                horseshoe_east + 
+                causeway_2 + 
+                square + 
+                horseshoe_north +
+                causeway_4, 
+                data = temples_onehot_morph[, c(1:10, 12:17)])
+
+as.matrix(names(temples_onehot_morph[, c(1:10, 12:17)]))
