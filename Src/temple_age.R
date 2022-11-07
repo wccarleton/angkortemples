@@ -38,25 +38,24 @@ temples <- right_join(t_dates, t_vars, by = "id")
 
 # set up a Nimble model
 templeCode <- nimbleCode({
-    beta0 ~ dnorm(0, sd = 1000) # intercept
     for(m in 1:M){
         morpho[m] ~ dnorm(0, sd = 1000)
     }
     for(j in 1:J){
         beta[j] ~ dnorm(0, sd = 1000) # regression coefs
     }
-    sigma ~ dunif(0, 150) # prior variance for regression model
+    sigma ~ dunif(0, 1000) # prior variance for regression model
     for(j in 1:(J - 2)){
         theta[j] ~ dbeta(a[j], b[j]) # prior for hot-encoded vars
     }
     for(n in 1:N){
         x[n, 1] ~ dcat(prob = morpho_prob[1:M])
         x[n, 2] ~ dunif(min = 1, max = 360) # azimuth
-        x[n, 3] ~ dlnorm(meanlog = 0, sdlog = 100) # area
+        x[n, 3] ~ dlnorm(meanlog = 7, sdlog = 10) # area
         for(j in 4:J){
             x[n, j] ~ dbern(theta[j - 3]) # hot-encoded covariates
         }
-        temple_age[n] ~ dnorm(beta0 + morpho[x[n, 1]] + inprod(beta[1:J], x[n, 2:(J + 1)]), sd = sigma) # core model
+        temple_age[n] ~ dnorm(morpho[x[n, 1]] + inprod(beta[1:J], x[n, 2:(J + 1)]), sd = sigma) # core model
     }
 })
 
@@ -91,7 +90,6 @@ templeData <- list(temple_age = temples_idx_morph$year_ce,
                     x = temples_idx_morph[, -c(1, 2)]) # c(3:10, 12:17)]) # last column dropped b/c of collinearity in one_hot morph
 
 templeInits <- list(theta = rep(0.5, H),
-                    beta0 = 0,
                     beta = rep(0, J),
                     morpho = rep(0, M),
                     sigma = 100)
@@ -125,11 +123,9 @@ cv_out <- runCrossValidate(MCMCconfiguration = cv_config,
                             nBootReps = NA,
                             silent = T)
 
-traceplot(mcmc(mcmc_out$samples[, "beta[16]"]))
+traceplot(mcmc(mcmc_out$samples[, "morpho[1]"]))
 
-hist(mcmc_out$samples[-c(1:1000), 2])
-
-pairs(mcmc_out$samples[-c(1:1000), c(1:9)])
+pairs(mcmc_out$samples[, c(11:18)])
 
 # lm for comparison
 lm_temples <- lm(year_ce ~
@@ -151,4 +147,4 @@ lm_temples <- lm(year_ce ~
                 blob,
                 data = temples_onehot_morph)
 
-summary(lm_temples)
+as.matrix(names(temples_onehot_morph[, c(1:10, 12:17)]))
