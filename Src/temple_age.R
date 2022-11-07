@@ -108,6 +108,12 @@ mcmc_out <- nimbleMCMC(model = temple,
                         WAIC = T,
                         monitors = c("morpho", "beta", "sigma", "mu"))
 
+mcmc_out$summary
+
+# look at MAD for the model
+idx_mu <- grep("mu",colnames(mcmc_out$samples))
+summary(abs(temples_idx_morph$year_ce - colMeans(mcmc_out$samples[, idx_mu])))
+
 # MAE (AAE, MAD) loss function for cv
 MADlossFunction <- function(simulatedDataValues, actualDataValues){
   MAD <- mean(abs(simulatedDataValues - actualDataValues))
@@ -119,12 +125,12 @@ cv_config <- configureMCMC(model = temple)
 cv_out <- runCrossValidate(MCMCconfiguration = cv_config,
                             k = nrow(temples_idx_morph),
                             lossFunction = MADlossFunction,
-                            MCMCcontrol = list(niter = 20000, nburnin = 2000),
+                            MCMCcontrol = list(niter = 30000, nburnin = 3000),
                             nCores = 1,
                             nBootReps = NA,
                             silent = T)
 
-traceplot(mcmc(mcmc_out$samples[, "morpho[1]"]))
+traceplot(mcmc(mcmc_out$samples[, "mu[1]"]))
 
 pairs(mcmc_out$samples[, c(11:18)])
 
