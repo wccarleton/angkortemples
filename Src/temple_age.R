@@ -45,15 +45,15 @@ templeCode <- nimbleCode({
         beta[j] ~ dnorm(0, sd = 1000) # regression coefs
     }
     sigma ~ dunif(0, 1000) # prior variance for regression model
-    for(j in 1:(J - 2)){
-        theta[j] ~ dbeta(a[j], b[j]) # prior for hot-encoded vars
+    for(h in 1:H){
+        theta[h] ~ dbeta(a[h], b[h]) # prior for hot-encoded vars
     }
     for(n in 1:N){
         x[n, 1] ~ dcat(prob = morpho_prob[1:M])
         x[n, 2] ~ dunif(min = 1, max = 360) # azimuth
         x[n, 3] ~ dlnorm(meanlog = 7, sdlog = 10) # area
-        for(j in 4:J){
-            x[n, j] ~ dbern(theta[j - 3]) # hot-encoded covariates
+        for(h in 1:H){
+            x[n, 3 + h] ~ dbern(theta[h]) # hot-encoded covariates
         }
         mu[n] <- morpho[x[n, 1]] + inprod(beta[1:J], x[n, 2:(J + 1)])
         temple_age[n] ~ dnorm(mu[n], sd = sigma) # core model
@@ -84,8 +84,9 @@ templeConsts <- list(a = rep(1, H), # a,b are the parameters of the hot-encoded 
                     b = rep(1, H),
                     N = nrow(temples_idx_morph),
                     M = M,
+                    H = H,
                     J = J,
-                    morpho_prob = rep(1 / M, M) ) # predictors (without morpho type variable)
+                    morpho_prob = rep(1 / M, M) )
 
 templeData <- list(temple_age = temples_idx_morph$year_ce,
                     x = temples_idx_morph[, -c(1, 2)]) # c(3:10, 12:17)]) # last column dropped b/c of collinearity in one_hot morph
@@ -129,6 +130,8 @@ cv_out <- runCrossValidate(MCMCconfiguration = cv_config,
                             nCores = 1,
                             nBootReps = NA,
                             silent = T)
+
+summary(do.call(rbind,cv_out$foldCVinfo)[, 1])
 
 traceplot(mcmc(mcmc_out$samples[, "mu[1]"]))
 
