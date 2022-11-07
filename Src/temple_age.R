@@ -106,7 +106,7 @@ mcmc_out <- nimbleMCMC(model = temple,
                         nburnin = 5000,
                         summary = T,
                         WAIC = T,
-                        monitors = c("beta", "sigma", "mu"))
+                        monitors = c("morpho", "beta", "sigma", "mu"))
 
 # MAE (AAE, MAD) loss function for cv
 MADlossFunction <- function(simulatedDataValues, actualDataValues){
