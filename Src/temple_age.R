@@ -38,7 +38,10 @@ temples <- right_join(t_dates, t_vars, by = "id")
 
 # set up a Nimble model
 templeCode <- nimbleCode({
-    beta0 ~ dnorm(0, sd = 1000) # intercept
+    #beta0 ~ dnorm(0, sd = 1000) # intercept
+    for(m in 1:M){
+        morpho[m] ~ dnorm(0, sd = 1000)
+    }
     for(j in 1:J){
         beta[j] ~ dnorm(0, sd = 1000) # regression coefs
     }
@@ -47,12 +50,13 @@ templeCode <- nimbleCode({
         theta[j] ~ dbeta(a[j], b[j]) # prior for hot-encoded vars
     }
     for(n in 1:N){
-        x[n, 1] ~ dunif(min = 1, max = 360) # azimuth
-        x[n, 2] ~ dlnorm(meanlog = 0, sdlog = 100) # area
-        for(j in 3:J){
-            x[n, j] ~ dbern(theta[j - 2]) # hot-encoded covariates
+        x[n, 1] ~ dcat(prob = morpho_prob[1:M])
+        x[n, 2] ~ dunif(min = 1, max = 360) # azimuth
+        x[n, 3] ~ dlnorm(meanlog = 0, sdlog = 100) # area
+        for(j in 4:J){
+            x[n, j] ~ dbern(theta[j - 3]) # hot-encoded covariates
         }
-        temple_age[n] ~ dnorm(beta0 + inprod(beta[1:J], x[n, 1:J]), sd = sigma) # core model
+        temple_age[n] ~ dnorm(morpho[x[n, 1]] + inprod(beta[1:J], x[n, 1:J]), sd = sigma) # core model
     }
 })
 
@@ -68,19 +72,28 @@ temples_onehot_morph <- pivot_wider(temples_complete,
                                     values_fill = 0, 
                                     values_fn = function(x)as.numeric(!is.na(x)))
 
-# M <- length(levels(temples$morph))
+temples_idx_morph <- temples_complete
+temples_idx_morph$morph <- as.numeric(temples_idx_morph$morph)
 
-templeConsts <- list(a = rep(1, 12), # a,b are the parameters of the hot-encoded probability priors and these are naive
-                    b = rep(1, 12),
-                    N = nrow(temples_onehot_morph),
-                    J = 14) # predictors (less the dropped morph one_hot column)
+M <- length(levels(temples$morph))
+H <- 8
+Cont <- 2
+J <- H + Cont
 
-templeData <- list(temple_age = temples_onehot_morph$year_ce,
-                    x = temples_onehot_morph[, c(3:10, 12:17)]) # last column dropped b/c of collinearity in one_hot morph
+templeConsts <- list(a = rep(1, H), # a,b are the parameters of the hot-encoded probability priors and these are naive
+                    b = rep(1, H),
+                    N = nrow(temples_idx_morph),
+                    M = M,
+                    J = J,
+                    morpho_prob = rep(1 / M, M) ) # predictors (without morpho type variable)
 
-templeInits <- list(theta = rep(0.5, 12),
-                    beta0 = 0,
-                    beta = rep(0, 14),
+templeData <- list(temple_age = temples_idx_morph$year_ce,
+                    x = temples_idx_morph[, -c(1, 2)]) # c(3:10, 12:17)]) # last column dropped b/c of collinearity in one_hot morph
+
+templeInits <- list(theta = rep(0.5, H),
+                    #beta0 = 0,
+                    beta = rep(0, J),
+                    morpho = rep(0, M),
                     sigma = 100)
 
 temple <- nimbleModel(code = templeCode,
