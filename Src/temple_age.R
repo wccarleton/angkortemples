@@ -116,21 +116,7 @@ hist(mcmc_out$samples[-c(1:1000), 2])
 
 pairs(mcmc_out$samples[-c(1:1000), c(1:9)])
 
-# simple lm for comparison
-lm_temples <- lm(year_ce ~
-                morph +
-                azimuth + 
-                log(area) + 
-                trait_1 + 
-                trait_2 + 
-                trait_3 + 
-                trait_4 + 
-                trait_5 + 
-                trait_6 + 
-                trait_8, 
-                data = temples_complete)
-
-# more directly comparable
+# lm for comparison
 lm_temples <- lm(year_ce ~
                 azimuth + 
                 area + 
