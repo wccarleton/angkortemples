@@ -38,7 +38,7 @@ temples <- right_join(t_dates, t_vars, by = "id")
 
 # set up a Nimble model
 templeCode <- nimbleCode({
-    #beta0 ~ dnorm(0, sd = 1000) # intercept
+    beta0 ~ dnorm(0, sd = 1000) # intercept
     for(m in 1:M){
         morpho[m] ~ dnorm(0, sd = 1000)
     }
@@ -56,7 +56,7 @@ templeCode <- nimbleCode({
         for(j in 4:J){
             x[n, j] ~ dbern(theta[j - 3]) # hot-encoded covariates
         }
-        temple_age[n] ~ dnorm(morpho[x[n, 1]] + inprod(beta[1:J], x[n, 1:J]), sd = sigma) # core model
+        temple_age[n] ~ dnorm(beta0 + morpho[x[n, 1]] + inprod(beta[1:J], x[n, 2:(J + 1)]), sd = sigma) # core model
     }
 })
 
@@ -91,7 +91,7 @@ templeData <- list(temple_age = temples_idx_morph$year_ce,
                     x = temples_idx_morph[, -c(1, 2)]) # c(3:10, 12:17)]) # last column dropped b/c of collinearity in one_hot morph
 
 templeInits <- list(theta = rep(0.5, H),
-                    #beta0 = 0,
+                    beta0 = 0,
                     beta = rep(0, J),
                     morpho = rep(0, M),
                     sigma = 100)
