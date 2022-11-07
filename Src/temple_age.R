@@ -147,4 +147,4 @@ lm_temples <- lm(year_ce ~
                 blob,
                 data = temples_onehot_morph)
 
-as.matrix(names(temples_onehot_morph[, c(1:10, 12:17)]))
+summary(lm_temples)
