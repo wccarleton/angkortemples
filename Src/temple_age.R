@@ -116,7 +116,7 @@ MADlossFunction <- function(simulatedDataValues, actualDataValues){
 cv_config <- configureMCMC(model = temple)
 
 cv_out <- runCrossValidate(MCMCconfiguration = cv_config,
-                            k = 5,#nrow(temples_onehot_morph),
+                            k = nrow(temples_idx_morph),
                             lossFunction = MADlossFunction,
                             MCMCcontrol = list(niter = 20000, nburnin = 2000),
                             nCores = 1,
