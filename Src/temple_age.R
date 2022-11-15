@@ -40,6 +40,9 @@ t_vol <- data.frame(id = temple_vol$Temple.ID,
 temples <- right_join(t_dates, t_vars, by = "id") # right_join because not all temples have dates
 temples <- left_join(temples, t_vol, by = "id") # add volume data
 
+# row 451 has a bad azimuth entry--364 degrees--so I'm removing it
+temples <- temples[-451, ]
+
 # set up a Nimble model
 templeCode <- nimbleCode({
     beta0 ~ dnorm(0, sd = 1000)
@@ -274,13 +277,7 @@ temple <- nimbleModel(code = templeCode,
                 data = templeData,
                 inits = templeInits)
 
-params_to_track <- c("beta0", 
-                    "morpho", 
-                    "morpho_prob", 
-                    "beta", 
-                    "sigma", 
-                    "mu", 
-                    "temple_age")
+params_to_track <- c("temple_age")
 
 mcmc_out_predict <- nimbleMCMC(model = temple,
                                 niter = 40000,
@@ -288,5 +285,7 @@ mcmc_out_predict <- nimbleMCMC(model = temple,
                                 summary = T,
                                 WAIC = T,
                                 monitors = params_to_track)
+
+age_sample_idx <- grep("temple_age", colnames(mcmc_out_predict$samples))
 
 mcmc_out_predict$summary
