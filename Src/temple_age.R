@@ -402,3 +402,47 @@ mean_volume_summaries_complete <- mean_volume_summaries[complete.cases(mean_volu
 plot(mean_iqr ~ year_ce, data = iqr_sample_means_complete, type = "lines", col = "red")
 
 lines(mean_median ~ year_ce, data = median_sample_means_complete, col = "blue")
+
+# have a look at temple counts per period including dating uncertainties
+nbins <- length(idx_range[1]:idx_range[2])
+temple_counts <- array(dim = c(nrow(temple_age_samples), nbins))
+
+period_counts <- function(x, 
+                        datum, 
+                        delta, 
+                        included_indeces) {
+    bin_idx <- floor((x - datum) / delta) + 1
+    nbins <- length(included_indeces)
+    counts <- rep(NA, nbins)
+    for(j in 1:nbins) {
+        counts[j] <- sum(bin_idx == included_indeces[j])
+    }
+    return(counts)
+}
+
+for(j in 1:nrow(temple_age_samples)){
+    temple_counts[j, ] <- period_counts(x = temple_age_samples[j, ],
+                                        datum = datum,
+                                        delta = delta,
+                                        included_indeces = idx_range[1]:idx_range[2])
+}
+
+count_samples_focal = as.data.frame(temple_counts[, focal_periods])
+colnames(count_samples_focal) <- paste("P", 1:ncol(count_samples_focal), sep = "")
+count_samples_long <- pivot_longer(count_samples_focal, 
+                                cols = 1:ncol(count_samples_focal), 
+                                names_to="period", 
+                                values_to = "count")
+
+plt2 <- ggplot() +
+    geom_boxplot(data = count_samples_long, 
+            mapping = aes(x = period, y = count, group = period),
+            fill = "blue",
+            colour = "#000088") +
+    scale_x_discrete(labels = period_labels) +
+    labs(title = "Temple Counts per Period",
+        y = "count",
+        x = "Period Centers in Years CE") +
+    theme_minimal(base_size = 20) +
+    theme(plot.title = element_text(hjust = 0.5))
+plt2
