@@ -3,6 +3,7 @@ library(nimble)
 library(coda)
 library(tidyr)
 library(dplyr)
+library(ggplot2)
 
 # pull in raw data
 temple_known_dates <- read.csv("./Data/temple_known_dates.csv", as.is = T)
@@ -46,7 +47,7 @@ temples <- temples[-451, ]
 # set up a Nimble model
 templeCode <- nimbleCode({
     beta0 ~ dnorm(0, sd = 1000)
-    morpho_prob[1:M] ~ ddirch(alpha = a[1:M])
+    morpho_prob[1:M] ~ ddirch(alpha = d_alpha[1:M])
     for(m in 1:M){
         morpho[m] ~ dnorm(beta0, sd = 200)
     }
@@ -90,13 +91,13 @@ Cont <- 2
 J <- H + Cont
 N <- nrow(temples_idx_morph)
 
-templeConsts <- list(a = rep(1, H), # a,b are the parameters of the hot-encoded probability priors and these are naive
+templeConsts <- list(a = rep(1, H), # a,b are the parameters of the Beta priors for the hot-encoded data and these are naive
                     b = rep(1, H),
-                    N = N,
-                    M = M,
-                    H = H,
-                    J = J,
-                    a = rep(1, M))
+                    N = N, # number of observations (temples)
+                    M = M, # number of potential morpho types (more types than are present in the complete.cases data)
+                    H = H, # number of binary predictor variables
+                    J = J, # total number of predictor variables
+                    d_alpha = rep(1, M)) # parameter vector for Dirichlet prior
 
 # don't include temple volumes as a predictor
 
@@ -250,13 +251,13 @@ Cont <- 2
 J <- H + Cont
 N <- nrow(temples_predict)
 
-templeConsts <- list(a = rep(1, H), # a,b are the parameters of the hot-encoded probability priors and these are naive
+templeConsts <- list(a = rep(1, H),
                     b = rep(1, H),
                     N = N,
                     M = M,
                     H = H,
                     J = J,
-                    a = rep(1, M))
+                    d_alpha = rep(1, M))
 
 # don't include temple volumes as a predictor
 
@@ -265,6 +266,9 @@ tv_index <- grep("volume", colnames(temples_predict))
 templeData <- list(temple_age = temples_predict$year_ce,
                     x = temples_predict[, -c(1, 2, tv_index)])
 
+# Since much of the data now included are NA (missing values) intended to be imputed during mcmc, it would be burdensome to fully initialize
+# the model. So, we won't, but it means there will be warnings about out of bounds indeces (the random index variables) and initialization
+# when the mcmc is run. These warnings can be safely ignored.
 templeInits <- list(theta = rep(0.5, H),
                     beta0 = 0,
                     beta = rep(0, J),
@@ -286,6 +290,115 @@ mcmc_out_predict <- nimbleMCMC(model = temple,
                                 WAIC = T,
                                 monitors = params_to_track)
 
-age_sample_idx <- grep("temple_age", colnames(mcmc_out_predict$samples))
-
 mcmc_out_predict$summary
+
+# IQR and median temple volumes over time
+
+temple_age_samples <- mcmc_out_predict$samples
+temples_with_volumes <- which(!is.na(temples_predict$volume))
+temple_age_samples <- temple_age_samples[, temples_with_volumes]
+
+temple_volumes <- temples_predict[temples_with_volumes, "volume"]
+
+datum <- 750
+delta <- 100
+
+idx_range <- floor( (range(temple_age_samples) - datum) / delta) + 1
+
+# how many temples in each period? This only works exactly with known dates because
+# each new sample of probable dates can lead to temples moving between betweens
+table(floor( (temple_age_samples[4, ] - datum) / delta) + 1)
+
+
+nbins <- length(idx_range[1]:idx_range[2])
+p <- seq(0, 1, 0.25)
+volume_summaries <- array(dim = c(nrow(temple_age_samples), length(p), nbins))
+
+period_quantiles <- function(x, 
+                            y, 
+                            datum, 
+                            delta, 
+                            included_indeces, 
+                            p, 
+                            ...) {
+    bin_idx <- floor((x - datum) / delta) + 1
+    nbins <- length(included_indeces)
+    quantiles <- array(dim = c(1, length(p), nbins))
+    for(j in 1:nbins) {
+        temples_in_bin <- which(bin_idx == included_indeces[j])
+        quantiles[, , j] <- quantile(y[temples_in_bin], 
+                                    probs = p, 
+                                    ...)
+    }
+    return(quantiles)
+}
+
+for(j in 1:nrow(temple_age_samples)){
+    volume_summaries[j, , ] <- period_quantiles(x = temple_age_samples[j, ],
+                                            y = temple_volumes,
+                                            datum = datum,
+                                            delta = delta,
+                                            included_indeces = idx_range[1]:idx_range[2],
+                                            p = p,
+                                            na.rm = T)
+}
+
+head(volume_summaries)
+volume_summaries[1, , ]
+diff(volume_summaries[1 , c(1, 3), ])
+
+# focus on IQR and median
+bin_start_year_ce <- datum + ((idx_range[1]:idx_range[2] - 1) * delta)
+
+iqr_samples <- apply(volume_summaries, 1, function(x)x[4, ] - x[2, ])
+median_samples <- apply(volume_summaries, 1, function(x)x[3, ])
+
+# pivot longer for easier plotting
+
+# select focal columns (these are periods over which we know Angkor was actively occupied)
+focal_periods <- which(idx_range[1]:idx_range[2] > 0 & idx_range[1]:idx_range[2] < 7)
+
+iqr_samples_focal = as.data.frame(t(iqr_samples))[, focal_periods]
+colnames(iqr_samples_focal) <- paste("P", 1:ncol(iqr_samples_focal), sep = "")
+iqr_sample_diffs <- apply(iqr_samples_focal, 1, diff)
+iqr_samples_long <- pivot_longer(iqr_samples_focal, 
+                                cols = 1:ncol(iqr_samples_focal), 
+                                names_to="period", 
+                                values_to = "iqr")
+
+med_samples_focal = as.data.frame(t(median_samples))[, focal_periods]
+colnames(med_samples_focal) <- paste("P", 1:ncol(med_samples_focal), sep = "")
+med_sample_diffs <- apply(med_samples_focal, 1, diff)
+med_samples_long <- pivot_longer(med_samples_focal, 
+                                cols = 1:ncol(med_samples_focal), 
+                                names_to="period", 
+                                values_to = "median")
+
+period_labels <- bin_start_year_ce[focal_periods] + (0.5 * delta)
+
+plt <- ggplot() +
+    geom_boxplot(data = iqr_samples_long, 
+            mapping = aes(x = period, y = log(iqr), group = period),
+            fill = "blue",
+            colour = "#000088") +
+    geom_boxplot(data = med_samples_long,
+            mapping = aes(x = period, y = log(median), group = period),
+            fill = "red",
+            colour = "#860000") +
+    scale_x_discrete(labels = period_labels) +
+    labs(title = "Logged Temple Volume IQR and Median per Period",
+        y = "log(IQR(volume)) and log(median(volume))",
+        x = "Period Centers in Years CE") +
+    theme_minimal(base_size = 20) +
+    theme(plot.title = element_text(hjust = 0.5))
+plt
+
+mean_volume_summaries <- data.frame(year_ce = bin_start_year_ce,
+                                    mean_median = rowMeans(median_samples),
+                                    mean_iqr = rowMeans(iqr_samples))
+
+mean_volume_summaries_complete <- mean_volume_summaries[complete.cases(mean_volume_summaries), ]
+
+plot(mean_iqr ~ year_ce, data = iqr_sample_means_complete, type = "lines", col = "red")
+
+lines(mean_median ~ year_ce, data = median_sample_means_complete, col = "blue")
