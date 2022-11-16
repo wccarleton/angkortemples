@@ -376,22 +376,31 @@ med_samples_long <- pivot_longer(med_samples_focal,
 
 period_labels <- bin_start_year_ce[focal_periods] + (0.5 * delta)
 
-plt <- ggplot() +
+plt_iqr <- ggplot() +
     geom_boxplot(data = iqr_samples_long, 
             mapping = aes(x = period, y = log(iqr), group = period),
             fill = "blue",
             colour = "#000088") +
+    scale_x_discrete(labels = period_labels) +
+    labs(title = "Logged Temple Volume IQR and Median per Period",
+        y = "log(IQR(volume))",
+        x = "Period Centers in Years CE") +
+    theme_minimal(base_size = 20) +
+    theme(plot.title = element_text(hjust = 0.5))
+plt_iqr
+
+plt_med <- ggplot() +
     geom_boxplot(data = med_samples_long,
             mapping = aes(x = period, y = log(median), group = period),
             fill = "red",
             colour = "#860000") +
     scale_x_discrete(labels = period_labels) +
     labs(title = "Logged Temple Volume IQR and Median per Period",
-        y = "log(IQR(volume)) and log(median(volume))",
+        y = "log(median(volume))",
         x = "Period Centers in Years CE") +
     theme_minimal(base_size = 20) +
     theme(plot.title = element_text(hjust = 0.5))
-plt
+plt_med
 
 mean_volume_summaries <- data.frame(year_ce = bin_start_year_ce,
                                     mean_median = rowMeans(median_samples),
@@ -434,7 +443,7 @@ count_samples_long <- pivot_longer(count_samples_focal,
                                 names_to="period", 
                                 values_to = "count")
 
-plt2 <- ggplot() +
+plt_count <- ggplot() +
     geom_boxplot(data = count_samples_long, 
             mapping = aes(x = period, y = count, group = period),
             fill = "blue",
@@ -445,4 +454,4 @@ plt2 <- ggplot() +
         x = "Period Centers in Years CE") +
     theme_minimal(base_size = 20) +
     theme(plot.title = element_text(hjust = 0.5))
-plt2
+plt_count
