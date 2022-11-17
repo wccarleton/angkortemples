@@ -378,26 +378,26 @@ period_labels <- bin_start_year_ce[focal_periods] + (0.5 * delta)
 
 plt_iqr <- ggplot() +
     geom_boxplot(data = iqr_samples_long, 
-            mapping = aes(x = period, y = log(iqr), group = period),
+            mapping = aes(x = period, y = log(iqr)),
             fill = "blue",
             colour = "#000088") +
     scale_x_discrete(labels = period_labels) +
     labs(title = "Logged Temple Volume IQR and Median per Period",
         y = "log(IQR(volume))",
-        x = "Period Centers in Years CE") +
+        x = "Period Midpoints in Years CE") +
     theme_minimal(base_size = 20) +
     theme(plot.title = element_text(hjust = 0.5))
 plt_iqr
 
 plt_med <- ggplot() +
     geom_boxplot(data = med_samples_long,
-            mapping = aes(x = period, y = log(median), group = period),
+            mapping = aes(x = period, y = log(median)),
             fill = "red",
             colour = "#860000") +
     scale_x_discrete(labels = period_labels) +
     labs(title = "Logged Temple Volume IQR and Median per Period",
         y = "log(median(volume))",
-        x = "Period Centers in Years CE") +
+        x = "Period Midpoints in Years CE") +
     theme_minimal(base_size = 20) +
     theme(plot.title = element_text(hjust = 0.5))
 plt_med
@@ -445,13 +445,18 @@ count_samples_long <- pivot_longer(count_samples_focal,
 
 plt_count <- ggplot() +
     geom_boxplot(data = count_samples_long, 
-            mapping = aes(x = period, y = count, group = period),
+            mapping = aes(x = period, y = count),
             fill = "blue",
             colour = "#000088") +
     scale_x_discrete(labels = period_labels) +
     labs(title = "Temple Counts per Period",
         y = "count",
-        x = "Period Centers in Years CE") +
+        x = "Period Midpoints in Years CE") +
     theme_minimal(base_size = 20) +
     theme(plot.title = element_text(hjust = 0.5))
 plt_count
+
+ggsave(filename = "~/Desktop/AngkorTempleCounts.pdf", 
+        device = "pdf", 
+        width = 10, height = 10, 
+        units = "cm")
