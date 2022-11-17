@@ -402,15 +402,15 @@ plt_med <- ggplot() +
     theme(plot.title = element_text(hjust = 0.5))
 plt_med
 
-mean_volume_summaries <- data.frame(year_ce = bin_start_year_ce,
+mean_volume_summaries <- data.frame(year_ce = bin_start_year_ce + 50,
                                     mean_median = rowMeans(median_samples),
                                     mean_iqr = rowMeans(iqr_samples))
 
 mean_volume_summaries_complete <- mean_volume_summaries[complete.cases(mean_volume_summaries), ]
 
-plot(mean_iqr ~ year_ce, data = iqr_sample_means_complete, type = "lines", col = "red")
+plot(mean_iqr ~ year_ce, data = mean_volume_summaries_complete, type = "l", col = "red")
 
-lines(mean_median ~ year_ce, data = median_sample_means_complete, col = "blue")
+lines(mean_median ~ year_ce, data = mean_volume_summaries_complete, col = "blue")
 
 # have a look at temple counts per period including dating uncertainties
 nbins <- length(idx_range[1]:idx_range[2])
