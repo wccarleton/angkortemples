@@ -4,6 +4,7 @@ library(coda)
 library(tidyr)
 library(dplyr)
 library(ggplot2)
+library(ggpubr)
 
 # pull in raw data
 temple_known_dates <- read.csv("./Data/temple_known_dates.csv", as.is = T)
@@ -261,10 +262,10 @@ templeConsts <- list(a = rep(1, H),
 
 # don't include temple volumes as a predictor
 
-tv_index <- grep("volume", colnames(temples_predict))
+volume_column <- grep("volume", colnames(temples_predict))
 
 templeData <- list(temple_age = temples_predict$year_ce,
-                    x = temples_predict[, -c(1, 2, tv_index)])
+                    x = temples_predict[, -c(1, 2, volume_column)])
 
 # Since much of the data now included are NA (missing values) intended to be imputed during mcmc, it would be burdensome to fully initialize
 # the model. So, we won't, but it means there will be warnings about out of bounds indeces (the random index variables) and initialization
@@ -298,34 +299,30 @@ temple_age_samples <- mcmc_out_predict$samples
 temples_with_volumes <- which(!is.na(temples_predict$volume))
 temple_age_samples <- temple_age_samples[, temples_with_volumes]
 
-temple_volumes <- temples_predict[temples_with_volumes, "volume"]
+temple_volumes <- log(temples_predict[temples_with_volumes, "volume"])
 
-datum <- 750
-delta <- 100
+datum <- 800
+delta <- 50
 
 idx_range <- floor( (range(temple_age_samples) - datum) / delta) + 1
 
-# how many temples in each period? This only works exactly with known dates because
-# each new sample of probable dates can lead to temples moving between betweens
-table(floor( (temple_age_samples[4, ] - datum) / delta) + 1)
-
-
-nbins <- length(idx_range[1]:idx_range[2])
+bins <- idx_range[1]:idx_range[2]
+nbins <- length(bins)
 p <- seq(0, 1, 0.25)
 volume_summaries <- array(dim = c(nrow(temple_age_samples), length(p), nbins))
 
 period_quantiles <- function(x, 
                             y, 
                             datum, 
-                            delta, 
-                            included_indeces, 
+                            delta,
+                            bins, 
                             p, 
                             ...) {
     bin_idx <- floor((x - datum) / delta) + 1
-    nbins <- length(included_indeces)
+    nbins <- length(bins)
     quantiles <- array(dim = c(1, length(p), nbins))
     for(j in 1:nbins) {
-        temples_in_bin <- which(bin_idx == included_indeces[j])
+        temples_in_bin <- which(bin_idx == bins[j])
         quantiles[, , j] <- quantile(y[temples_in_bin], 
                                     probs = p, 
                                     ...)
@@ -338,93 +335,89 @@ for(j in 1:nrow(temple_age_samples)){
                                             y = temple_volumes,
                                             datum = datum,
                                             delta = delta,
-                                            included_indeces = idx_range[1]:idx_range[2],
+                                            bins = bins,
                                             p = p,
                                             na.rm = T)
 }
 
-head(volume_summaries)
-volume_summaries[1, , ]
-diff(volume_summaries[1 , c(1, 3), ])
-
 # focus on IQR and median
-bin_start_year_ce <- datum + ((idx_range[1]:idx_range[2] - 1) * delta)
+bin_start_year_ce <- (bins * delta) + datum
 
-iqr_samples <- apply(volume_summaries, 1, function(x)x[4, ] - x[2, ])
-median_samples <- apply(volume_summaries, 1, function(x)x[3, ])
+iqr_samples <- t(apply(volume_summaries, 1, function(x)x[4, ] - x[2, ]))
+median_samples <- t(apply(volume_summaries, 1, function(x)x[3, ]))
 
 # pivot longer for easier plotting
 
-# select focal columns (these are periods over which we know Angkor was actively occupied)
-focal_periods <- which(idx_range[1]:idx_range[2] > 0 & idx_range[1]:idx_range[2] < 7)
+period_names <- paste("P", 1:nbins, sep = "")
+period_labels <- bin_start_year_ce + (0.5 * delta)
 
-iqr_samples_focal = as.data.frame(t(iqr_samples))[, focal_periods]
-colnames(iqr_samples_focal) <- paste("P", 1:ncol(iqr_samples_focal), sep = "")
-iqr_sample_diffs <- apply(iqr_samples_focal, 1, diff)
-iqr_samples_long <- pivot_longer(iqr_samples_focal, 
-                                cols = 1:ncol(iqr_samples_focal), 
+# select focal columns (these are periods over which we know Angkor was actively occupied)
+focal_periods <- which(bin_start_year_ce >= 500 & bin_start_year_ce <= 1350)
+
+iqr_samples_df <- as.data.frame(iqr_samples)
+names(iqr_samples_df) <- period_names
+iqr_samples_long <- pivot_longer(iqr_samples_df, 
+                                cols = everything(), 
                                 names_to="period", 
                                 values_to = "iqr")
 
-med_samples_focal = as.data.frame(t(median_samples))[, focal_periods]
-colnames(med_samples_focal) <- paste("P", 1:ncol(med_samples_focal), sep = "")
-med_sample_diffs <- apply(med_samples_focal, 1, diff)
-med_samples_long <- pivot_longer(med_samples_focal, 
-                                cols = 1:ncol(med_samples_focal), 
+median_samples_df <- as.data.frame(median_samples)
+names(median_samples_df) <- period_names
+med_samples_long <- pivot_longer(median_samples_df, 
+                                cols = everything(), 
                                 names_to="period", 
                                 values_to = "median")
 
-period_labels <- bin_start_year_ce[focal_periods] + (0.5 * delta)
-
 plt_iqr <- ggplot() +
-    geom_boxplot(data = iqr_samples_long, 
-            mapping = aes(x = period, y = log(iqr)),
+    geom_jitter(data = subset(iqr_samples_long, period %in% period_names[focal_periods]), 
+            mapping = aes(x = period, y = iqr),
+            width = 0.2,
+            alpha = 0.05) +
+    geom_boxplot(data = subset(iqr_samples_long, period %in% period_names[focal_periods]), 
+            mapping = aes(x = period, y = iqr),
             fill = "blue",
-            colour = "#000088") +
-    scale_x_discrete(labels = period_labels) +
+            colour = "#a8a8fd",
+            outlier.shape = NA,
+            alpha = 0.75) +
+    scale_x_discrete(labels = period_labels[focal_periods]) +
     labs(title = "Logged Temple Volume IQR and Median per Period",
-        y = "log(IQR(volume))",
+        y = "IQR(log(volume))",
         x = "Period Midpoints in Years CE") +
     theme_minimal(base_size = 20) +
     theme(plot.title = element_text(hjust = 0.5))
 plt_iqr
 
 plt_med <- ggplot() +
-    geom_boxplot(data = med_samples_long,
-            mapping = aes(x = period, y = log(median)),
+    geom_jitter(data = subset(med_samples_long, period %in% period_names[focal_periods]), 
+            mapping = aes(x = period, y = median),
+            width = 0.2, 
+            alpha = 0.05) +
+    geom_boxplot(data = subset(med_samples_long, period %in% period_names[focal_periods]),
+            mapping = aes(x = period, y = median),
             fill = "red",
-            colour = "#860000") +
-    scale_x_discrete(labels = period_labels) +
+            colour = "#ffa6a6",
+            outlier.shape = NA,
+            alpha = 0.75) +
+    scale_x_discrete(labels = period_labels[focal_periods]) +
     labs(title = "Logged Temple Volume IQR and Median per Period",
-        y = "log(median(volume))",
+        y = "median(log(volume))",
         x = "Period Midpoints in Years CE") +
     theme_minimal(base_size = 20) +
     theme(plot.title = element_text(hjust = 0.5))
 plt_med
 
-mean_volume_summaries <- data.frame(year_ce = bin_start_year_ce + 50,
-                                    mean_median = rowMeans(median_samples),
-                                    mean_iqr = rowMeans(iqr_samples))
-
-mean_volume_summaries_complete <- mean_volume_summaries[complete.cases(mean_volume_summaries), ]
-
-plot(mean_iqr ~ year_ce, data = mean_volume_summaries_complete, type = "l", col = "red")
-
-lines(mean_median ~ year_ce, data = mean_volume_summaries_complete, col = "blue")
-
 # have a look at temple counts per period including dating uncertainties
-nbins <- length(idx_range[1]:idx_range[2])
 temple_counts <- array(dim = c(nrow(temple_age_samples), nbins))
 
 period_counts <- function(x, 
                         datum, 
                         delta, 
-                        included_indeces) {
+                        bins) {
     bin_idx <- floor((x - datum) / delta) + 1
-    nbins <- length(included_indeces)
+    nbins <- length(bins)
     counts <- rep(NA, nbins)
     for(j in 1:nbins) {
-        counts[j] <- sum(bin_idx == included_indeces[j])
+        counts[j] <- sum(bin_idx == bins[j])
     }
     return(counts)
 }
@@ -433,22 +426,28 @@ for(j in 1:nrow(temple_age_samples)){
     temple_counts[j, ] <- period_counts(x = temple_age_samples[j, ],
                                         datum = datum,
                                         delta = delta,
-                                        included_indeces = idx_range[1]:idx_range[2])
+                                        bins = bins)
 }
 
-count_samples_focal = as.data.frame(temple_counts[, focal_periods])
-colnames(count_samples_focal) <- paste("P", 1:ncol(count_samples_focal), sep = "")
-count_samples_long <- pivot_longer(count_samples_focal, 
-                                cols = 1:ncol(count_samples_focal), 
+count_samples_df = as.data.frame(temple_counts)
+colnames(count_samples_df) <- period_names
+count_samples_long <- pivot_longer(count_samples_df, 
+                                cols = everything(), 
                                 names_to="period", 
                                 values_to = "count")
 
 plt_count <- ggplot() +
-    geom_boxplot(data = count_samples_long, 
+    geom_jitter(data = subset(count_samples_long, period %in% period_names[focal_periods]), 
             mapping = aes(x = period, y = count),
-            fill = "blue",
-            colour = "#000088") +
-    scale_x_discrete(labels = period_labels) +
+            width = 0.2, 
+            alpha = 0.05) +
+    geom_boxplot(data = subset(count_samples_long, period %in% period_names[focal_periods]), 
+            mapping = aes(x = period, y = count),
+            fill = "#008100",
+            colour = "green",
+            outlier.shape = NA,
+            alpha = 0.75) +
+    scale_x_discrete(labels = period_labels[focal_periods]) +
     labs(title = "Temple Counts per Period",
         y = "count",
         x = "Period Midpoints in Years CE") +
@@ -456,7 +455,11 @@ plt_count <- ggplot() +
     theme(plot.title = element_text(hjust = 0.5))
 plt_count
 
-ggsave(filename = "~/Desktop/AngkorTempleCounts.pdf", 
+ggarrange(plt_count, plt_med, plt_iqr,
+        ncol = 1,
+        align = "h")
+
+ggsave(filename = "~/Desktop/AngkorTemples.pdf", 
         device = "pdf", 
-        width = 10, height = 10, 
+        width = 10, height = 40, 
         units = "cm")
