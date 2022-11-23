@@ -159,8 +159,25 @@ cv_out <- runCrossValidate(MCMCconfiguration = cv_config,
 cv_mad <- do.call(rbind,cv_out$foldCVinfo)[, 1]
 
 # look at the distribution of cross-validated (leave-one-out) MAD values:
+cv_mad_rnd <- round(summary(cv_mad))
+quantile_labels <- row.names(cv_mad_mat)
+cv_quantile_ann <- mapply(function(x, y){paste(x, y, sep = ": ")},quantile_labels,cv_mad_mat)
+cv_plot_ann <- data.frame(x = rep(200, 6), y = seq(20, 15, -1), label = cv_quantile_ann)
+cv_mad_df <- data.frame(fold = 1:length(cv_mad), mad = cv_mad)
+plt_cv <- ggplot(data = cv_mad_df) +
+        geom_histogram(mapping = aes(x = mad), 
+            bins = 6,
+            color = "grey") +
+        labs(title = "Temple Age Prediction Errors",
+        y = "Frequency",
+        x = "Mean Absolue Deviation") +
+        geom_text(data = cv_plot_ann, aes(x = x, y = y, label = label), hjust = 0, size = 10) +
+        theme_minimal(base_size = 20) +
+        theme(plot.title = element_text(hjust = 0.5))
+plt_cv
 
-summary(cv_mad)
+ggsave(filename = "Output/cv_mad.pdf", 
+        device = "pdf")
 
 traceplot(mcmc(mcmc_out$samples[, "morpho_prob[2]"]))
 
@@ -351,8 +368,8 @@ median_samples <- t(apply(volume_summaries, 1, function(x)x[3, ]))
 period_names <- paste("P", 1:nbins, sep = "")
 period_labels <- bin_start_year_ce + (0.5 * delta)
 
-# select focal columns (these are periods over which we know Angkor was actively occupied)
-focal_periods <- which(bin_start_year_ce >= 500 & bin_start_year_ce <= 1350)
+# select focal periods
+focal_periods <- which(bin_start_year_ce >= 800 & bin_start_year_ce <= 1250)
 
 iqr_samples_df <- as.data.frame(iqr_samples)
 names(iqr_samples_df) <- period_names
@@ -369,15 +386,15 @@ med_samples_long <- pivot_longer(median_samples_df,
                                 values_to = "median")
 
 plt_iqr <- ggplot() +
-    geom_jitter(data = subset(iqr_samples_long, period %in% period_names[focal_periods]), 
-            mapping = aes(x = period, y = iqr),
-            width = 0.2,
-            alpha = 0.05) +
+    #geom_jitter(data = subset(iqr_samples_long, period %in% period_names[focal_periods]), 
+    #        mapping = aes(x = period, y = iqr),
+    #        width = 0.2,
+    #        alpha = 0.05) +
     geom_boxplot(data = subset(iqr_samples_long, period %in% period_names[focal_periods]), 
             mapping = aes(x = period, y = iqr),
             fill = "blue",
-            colour = "#a8a8fd",
-            outlier.shape = NA,
+            colour = "black",#"#a8a8fd",
+            outlier.shape = 1,
             alpha = 0.75) +
     scale_x_discrete(labels = period_labels[focal_periods]) +
     labs(title = "Logged Temple Volume IQR and Median per Period",
@@ -387,16 +404,19 @@ plt_iqr <- ggplot() +
     theme(plot.title = element_text(hjust = 0.5))
 plt_iqr
 
+ggsave(filename = "Output/AngkorTemples_volumes_iqr.pdf", 
+        device = "pdf")
+
 plt_med <- ggplot() +
-    geom_jitter(data = subset(med_samples_long, period %in% period_names[focal_periods]), 
-            mapping = aes(x = period, y = median),
-            width = 0.2, 
-            alpha = 0.05) +
+    #geom_jitter(data = subset(med_samples_long, period %in% period_names[focal_periods]), 
+    #        mapping = aes(x = period, y = median),
+    #        width = 0.2, 
+    #        alpha = 0.05) +
     geom_boxplot(data = subset(med_samples_long, period %in% period_names[focal_periods]),
             mapping = aes(x = period, y = median),
             fill = "red",
-            colour = "#ffa6a6",
-            outlier.shape = NA,
+            colour = "black",#"#ffa6a6",
+            outlier.shape = 1,
             alpha = 0.75) +
     scale_x_discrete(labels = period_labels[focal_periods]) +
     labs(title = "Logged Temple Volume IQR and Median per Period",
@@ -405,6 +425,9 @@ plt_med <- ggplot() +
     theme_minimal(base_size = 20) +
     theme(plot.title = element_text(hjust = 0.5))
 plt_med
+
+ggsave(filename = "Output/AngkorTemples_volumes_median.pdf", 
+        device = "pdf")
 
 # have a look at temple counts per period including dating uncertainties
 temple_counts <- array(dim = c(nrow(temple_age_samples), nbins))
@@ -437,15 +460,15 @@ count_samples_long <- pivot_longer(count_samples_df,
                                 values_to = "count")
 
 plt_count <- ggplot() +
-    geom_jitter(data = subset(count_samples_long, period %in% period_names[focal_periods]), 
-            mapping = aes(x = period, y = count),
-            width = 0.2, 
-            alpha = 0.05) +
+    #geom_jitter(data = subset(count_samples_long, period %in% period_names[focal_periods]), 
+    #        mapping = aes(x = period, y = count),
+    #        width = 0.2, 
+    #        alpha = 0.05) +
     geom_boxplot(data = subset(count_samples_long, period %in% period_names[focal_periods]), 
             mapping = aes(x = period, y = count),
             fill = "#008100",
-            colour = "green",
-            outlier.shape = NA,
+            colour = "black",#"green",
+            outlier.shape = 1,
             alpha = 0.75) +
     scale_x_discrete(labels = period_labels[focal_periods]) +
     labs(title = "Temple Counts per Period",
@@ -455,11 +478,15 @@ plt_count <- ggplot() +
     theme(plot.title = element_text(hjust = 0.5))
 plt_count
 
+ggsave(filename = "Output/AngkorTemples_counts.pdf", 
+        device = "pdf")
+
 ggarrange(plt_count, plt_med, plt_iqr,
         ncol = 1,
-        align = "h")
+        align = "v")
 
-ggsave(filename = "~/Desktop/AngkorTemples.pdf", 
-        device = "pdf", 
-        width = 10, height = 40, 
+ggsave(filename = "Output/AngkorTemples.pdf", 
+        device = "pdf",
+        height = 60,
+        width = 40,
         units = "cm")
