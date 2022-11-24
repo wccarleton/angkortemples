@@ -369,7 +369,7 @@ period_names <- paste("P", 1:nbins, sep = "")
 period_labels <- bin_start_year_ce + (0.5 * delta)
 
 # select focal periods
-focal_periods <- which(bin_start_year_ce >= 800 & bin_start_year_ce <= 1250)
+focal_periods <- which(bin_start_year_ce >= 800 & bin_start_year_ce <= 1475)
 
 iqr_samples_df <- as.data.frame(iqr_samples)
 names(iqr_samples_df) <- period_names
@@ -490,3 +490,56 @@ ggsave(filename = "Output/AngkorTemples.pdf",
         height = 60,
         width = 40,
         units = "cm")
+
+
+# Add in climate data for comparison
+# Buckley et al. 2010 PDSI reconstruction based on tree-rings
+climate_Buckley2010_PDSI <- read.table("Data/bidoup-nui-ba2010pdsi.txt", 
+                                    as.is = T, 
+                                    skip = 105, 
+                                    header = T)
+head(climate_Buckley2010_PDSI)
+names(climate_Buckley2010_PDSI) <- c("year_ce", "pdsi")
+
+# Zhang et al. 2008 Wanxiang Cave speleothem oxygen isotope record
+climate_Zhang2008_d18O <- read.table("Data/wanxiang2008.txt", 
+                                    as.is = T, 
+                                    skip = 105, 
+                                    header = T)
+head(climate_Zhang2008_d18O)
+names(climate_Zhang2008_d18O) <- c("distance", "year_ce", "d18O")
+#flip y axis on d18O
+climate_Zhang2008_d18O$d18O_neg <- -(climate_Zhang2008_d18O$d18O)
+
+plt_climate <- ggplot() +
+                geom_path(data = climate_Zhang2008_d18O,
+                    mapping = aes(x = year_ce, y = scale(d18O_neg)),
+                    color = "#5a5ab4",
+                    size = 2,
+                    alpha = 0.8) +
+                geom_path(data = climate_Buckley2010_PDSI,
+                    mapping = aes(x = year_ce, y = scale(pdsi)),
+                    color = "red") +
+                annotate("rect", 
+                        xmin = 1340,
+                        ymin = -3, 
+                        xmax = 1370,
+                        ymax = 3,
+                        alpha = 0.5, 
+                        fill = "yellow") +
+                annotate("rect", 
+                        xmin = 1400,
+                        ymin = -3, 
+                        xmax = 1430,
+                        ymax = 3,
+                        alpha = 0.5, 
+                        fill = "yellow") +
+                scale_x_continuous(breaks = seq(825, 1475, 50),
+                    limits = c(825, 1475)) +
+                theme_minimal(base_size = 20) +
+                theme(plot.title = element_text(hjust = 0.5))
+plt_climate                        
+
+ggarrange(plt_count, plt_climate,
+        ncol = 1,
+        align = "v")
