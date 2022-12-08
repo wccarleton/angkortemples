@@ -75,8 +75,9 @@ templeCode <- nimbleCode({
 temples_known <- subset(temples, !is.na(year_ce))
 
 # subset only complete cases
-temples_complete <- temples_known[complete.cases(temples_known), ]
+temples_complete <- temples_known[complete.cases(temples_known[, -14]), ]
 
+# the following is hot encoding, but it's a legacy from an earlier model---now using index variables defined for temples_idx_morph
 temples_onehot_morph <- pivot_wider(temples_complete, 
                                     names_from = morph, 
                                     values_from = morph, 
@@ -543,3 +544,9 @@ plt_climate
 ggarrange(plt_count, plt_climate,
         ncol = 1,
         align = "v")
+
+ggsave(filename = "Output/AngkorTemples_climate.pdf", 
+        device = "pdf",
+        height = 60,
+        width = 40,
+        units = "cm")
