@@ -5,9 +5,12 @@ library(tidyr)
 library(dplyr)
 library(ggplot2)
 library(ggpubr)
+library(leaflet)
+library(sp)
+library(maps)
 
 # pull in raw data
-temple_known_dates <- read.csv("./Data/temple_known_dates.csv", as.is = T)
+temple_known_dates <- read.csv("./Data/temple_known_dates.csv", as.is = T)[-c(105:111), ] # unexplained NAs at the bottom from 105:111 caused be errant values in rows 15:111 and cols AN and AO in the original spreadsheet
 temple_vars <- read.csv("./Data/temple_vars.csv", as.is = T)
 temple_vol <- read.csv("./Data/qry-data.csv", as.is = T)
 
@@ -550,3 +553,69 @@ ggsave(filename = "Output/AngkorTemples_climate.pdf",
         height = 60,
         width = 40,
         units = "cm")
+
+# mapping temple foundation events with chronological uncertainty
+# create a scaled 
+
+opacity_fun <- function(x, from, to) {
+    d <- density(x,
+            bw = 50, 
+            from = from, 
+            to = to)
+    d$y <- d$y / max(d$y)
+    plot(d)
+    f <- approxfun(y = d$y, 
+                x = d$x,
+                yleft = 0,
+                yright = 0)
+    return(f)
+}
+
+myopacityfun <- opacity_fun(x = mcmc_out_predict$samples[, 1], from = 750, to = 1400)
+myopacityfun(1000)
+
+# maybe simpler.... but assumes normally distributed dating uncertainty, which is the case given the model, but could change if the model is changed
+
+opacity <- function(x, at){
+    sigma <- sd(x)
+    if(sigma == 0){
+        return(rep(1, length(at)))
+    } else {
+        mu <- mean(x)
+        d <- dnorm(x = at, 
+            mean = mu, 
+            sd = sigma)
+        return(d / max(d))
+    }
+}
+
+sample_years <- 750:1400
+
+scaled_opacity <- opacity(x = mcmc_out_predict$samples[, 100], at = sample_years)
+plot(y = scaled_opacity, x = sample_years)
+
+opacity_matrix <- apply(mcmc_out_predict$samples, 2, opacity, at = sample_years)
+
+# need to add back in temple coordinates
+temple_coords <- data.frame(id = temple_vol$Temple.ID,
+                    x = temple_vol$X,
+                    y = temple_vol$Y)
+
+temple_coords <- temple_coords[complete.cases(temple_coords), ] # some temples in the volumes spreadsheet have no id
+temples_spatial <- left_join(temples_predict, temple_coords, by = "id")
+
+# evidently not all temples have coordinates, so we need to subset the dataframe and the opacity matrix in order to plot
+# the following logical vector can be used to select from the dataframe (by rows) and opacity matrix (by columns)
+
+has_coords <- complete.cases(temples_spatial[, c("x", "y")])
+xys <- temples_spatial[has_coords, c("x", "y")]
+
+spdf_temples <- SpatialPointsDataFrame(coords = xys, data = temples_spatial[has_coords, ], 
+                                    proj4string = CRS("+proj=utm +zone=48 +datum=WGS84 +units=m +no_defs"))
+
+spdf_temples_tr <- spTransform(spdf_temples, CRS("+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"))
+
+m <- leaflet()
+m <- addTiles(m)
+m <- addCircles(m, data = spdf_temples_tr)
+m
