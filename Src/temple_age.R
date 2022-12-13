@@ -39,14 +39,34 @@ t_vars <- data.frame(id = temple_vars$Temple.ID,
                     trait_7 = temple_vars$Thmaphnom,
                     trait_8 = temple_vars$other)
 t_vol <- data.frame(id = temple_vol$Temple.ID,
-                    volume = temple_vol$TV)
+                    volume = temple_vol$TV,
+                    x = temple_vol$X,
+                    y = temple_vol$Y)
 
 # merge the two dataframesusing the id column to match while ensuring all of the rows in the vars dataframe are included
 temples <- right_join(t_dates, t_vars, by = "id") # right_join because not all temples have dates
-temples <- left_join(temples, t_vol, by = "id") # add volume data
+temples <- left_join(temples, t_vol, by = "id") # add volume data and coordinates
 
 # row 451 has a bad azimuth entry--364 degrees--so I'm removing it
 temples <- temples[-451, ]
+
+
+# create a vector containg the idx of covariate columnes to include in models
+
+str_pattern <- paste("morph",
+                    "azimuth",
+                    "area",
+                    "trait_1",
+                    "trait_2",
+                    "trait_3",
+                    "trait_4",
+                    "trait_5",
+                    "trait_6",
+                    "trait_7",
+                    "trait_8",
+                    sep = "|")
+
+covariate_idx <- grep(str_pattern, colnames(temples))
 
 # set up a Nimble model
 templeCode <- nimbleCode({
@@ -74,11 +94,8 @@ templeCode <- nimbleCode({
     }
 })
 
-# subset only temples with known dates
-temples_known <- subset(temples, !is.na(year_ce))
-
-# subset only complete cases
-temples_complete <- temples_known[complete.cases(temples_known[, -14]), ]
+# subset only complete cases where complete excludes coordinate (x,y) columns
+temples_complete <- temples[complete.cases(temples[, c(2, covariate_idx)]), ]
 
 # the following is hot encoding, but it's a legacy from an earlier model---now using index variables defined for temples_idx_morph
 temples_onehot_morph <- pivot_wider(temples_complete, 
@@ -104,12 +121,8 @@ templeConsts <- list(a = rep(1, H), # a,b are the parameters of the Beta priors 
                     J = J, # total number of predictor variables
                     d_alpha = rep(1, M)) # parameter vector for Dirichlet prior
 
-# don't include temple volumes as a predictor
-
-tv_index <- grep("volume", colnames(temples_idx_morph))
-
 templeData <- list(temple_age = temples_idx_morph$year_ce,
-                    x = temples_idx_morph[, -c(1, 2, tv_index)])
+                    x = temples_idx_morph[, covariate_idx])
 
 templeInits <- list(theta = rep(0.5, H),
                     beta0 = 0,
@@ -281,12 +294,8 @@ templeConsts <- list(a = rep(1, H),
                     J = J,
                     d_alpha = rep(1, M))
 
-# don't include temple volumes as a predictor
-
-volume_column <- grep("volume", colnames(temples_predict))
-
 templeData <- list(temple_age = temples_predict$year_ce,
-                    x = temples_predict[, -c(1, 2, volume_column)])
+                    x = temples_predict[, covariate_idx])
 
 # Since much of the data now included are NA (missing values) intended to be imputed during mcmc, it would be burdensome to fully initialize
 # the model. So, we won't, but it means there will be warnings about out of bounds indeces (the random index variables) and initialization
@@ -555,7 +564,6 @@ ggsave(filename = "Output/AngkorTemples_climate.pdf",
         units = "cm")
 
 # mapping temple foundation events with chronological uncertainty
-# create a scaled 
 
 opacity_fun <- function(x, from, to) {
     d <- density(x,
@@ -597,25 +605,73 @@ plot(y = scaled_opacity, x = sample_years)
 opacity_matrix <- apply(mcmc_out_predict$samples, 2, opacity, at = sample_years)
 
 # need to add back in temple coordinates
-temple_coords <- data.frame(id = temple_vol$Temple.ID,
-                    x = temple_vol$X,
-                    y = temple_vol$Y)
+#temple_coords <- data.frame(id = temple_vol$Temple.ID,
+#                    x = temple_vol$X,
+#                    y = temple_vol$Y)
 
-temple_coords <- temple_coords[complete.cases(temple_coords), ] # some temples in the volumes spreadsheet have no id
-temples_spatial <- left_join(temples_predict, temple_coords, by = "id")
+#temple_coords <- temple_coords[complete.cases(temple_coords), ] # some temples in the volumes spreadsheet have no id
+#temples_spatial <- left_join(temples_predict, temple_coords, by = "id")
 
 # evidently not all temples have coordinates, so we need to subset the dataframe and the opacity matrix in order to plot
 # the following logical vector can be used to select from the dataframe (by rows) and opacity matrix (by columns)
 
-has_coords <- complete.cases(temples_spatial[, c("x", "y")])
-xys <- temples_spatial[has_coords, c("x", "y")]
+has_coords <- complete.cases(temples[, c("x", "y")])
+xys <- temples[has_coords, c("x", "y")]
 
 spdf_temples <- SpatialPointsDataFrame(coords = xys, data = temples_spatial[has_coords, ], 
                                     proj4string = CRS("+proj=utm +zone=48 +datum=WGS84 +units=m +no_defs"))
 
 spdf_temples_tr <- spTransform(spdf_temples, CRS("+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"))
 
+temporal_datum <- sample_years[100]
+
+current_opacity <- as.vector(opacity_matrix[10, has_coords])
+
+relative_temporal_indicator <- as.vector(apply(mcmc_out_predict$samples, 2, mean)[has_coords] >= temporal_datum)
+
+colour_idx <- relative_temporal_indicator + 1
+
+temporal_colour <- sapply(colour_idx, function(x)c("blue", "red")[x])
+
 m <- leaflet()
 m <- addTiles(m)
-m <- addCircles(m, data = spdf_temples_tr)
+
+m <- addCircles(m, 
+        data = spdf_temples_tr, 
+        opacity = current_opacity, 
+        color = temporal_colour)
+
 m
+
+
+# and now as a shiny app
+
+library(shiny)
+
+r_colors <- rgb(t(col2rgb(colors()) / 255))
+names(r_colors) <- colors()
+
+ui <- fluidPage(
+  leafletOutput("AngkorTemples"),
+  p(),
+  actionButton("recalc", "New points")
+)
+
+server <- function(input, output, session) {
+
+  points <- eventReactive(input$recalc, {
+    cbind(rnorm(40) * 2 + 13, rnorm(40) + 48)
+  }, ignoreNULL = FALSE)
+
+  output$AngkorTemples <- renderLeaflet({
+    m <- leaflet()
+    m <- addTiles(m)
+    m <- addCircles(m, 
+            data = spdf_temples_tr, 
+            opacity = current_opacity, 
+            color = temporal_colour)
+    m
+  })
+}
+
+shinyApp(ui, server)
