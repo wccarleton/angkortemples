@@ -618,7 +618,7 @@ opacity_matrix <- apply(mcmc_out_predict$samples, 2, opacity, at = sample_years)
 has_coords <- complete.cases(temples[, c("x", "y")])
 xys <- temples[has_coords, c("x", "y")]
 
-spdf_temples <- SpatialPointsDataFrame(coords = xys, data = temples_spatial[has_coords, ], 
+spdf_temples <- SpatialPointsDataFrame(coords = xys, data = temples[has_coords, ], 
                                     proj4string = CRS("+proj=utm +zone=48 +datum=WGS84 +units=m +no_defs"))
 
 spdf_temples_tr <- spTransform(spdf_temples, CRS("+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"))
@@ -627,7 +627,9 @@ temporal_datum <- sample_years[100]
 
 current_opacity <- as.vector(opacity_matrix[10, has_coords])
 
-relative_temporal_indicator <- as.vector(apply(mcmc_out_predict$samples, 2, mean)[has_coords] >= temporal_datum)
+temple_age_means <- apply(mcmc_out_predict$samples, 2, mean)[has_coords]
+
+relative_temporal_indicator <- as.vector(temple_age_means >= temporal_datum)
 
 colour_idx <- relative_temporal_indicator + 1
 
@@ -649,21 +651,56 @@ m
 library(shiny)
 
 ui <- fluidPage(
-  leafletOutput("AngkorTemples"),
-  p(),
+    sliderInput("obstime", 
+                "Year CE",
+                min = sample_years[1], 
+                max = max(sample_years), 
+                value = median(sample_years),
+                step = 1,
+                animate = animationOptions(interval = 100)),
+    leafletOutput("AngkorTemples"),
+    p(),
 )
 
 server <- function(input, output, session) {
 
-  output$AngkorTemples <- renderLeaflet({
-    m <- leaflet()
-    m <- addTiles(m)
-    m <- addCircles(m, 
-            data = spdf_temples_tr, 
-            opacity = current_opacity, 
-            color = temporal_colour)
-    m
-  })
+    temporal_datum <- reactive({
+        sample_years[input$obstime - sample_years[1] + 1]
+    })
+        
+    current_opacity <- reactive({
+        as.vector(opacity_matrix[input$obstime - sample_years[1] + 1, has_coords])
+    })
+
+    relative_temporal_indicator <- reactive({
+        as.vector(temple_age_means >= temporal_datum())
+    })
+
+    colour_idx <- reactive({
+        relative_temporal_indicator() + 1
+    })
+
+    current_colour <- reactive({
+        sapply(colour_idx(), function(x)c("blue", "red")[x])
+    })
+
+    output$AngkorTemples <- renderLeaflet({
+        m <- leaflet()
+        m <- addTiles(m)
+        m <- addCircles(m, 
+                data = spdf_temples_tr)
+        m
+    })
+
+    observe({
+        p <- leafletProxy("AngkorTemples")
+        p <- clearShapes(p)
+        p <- addCircles(p, 
+                data = spdf_temples_tr, 
+                opacity = current_opacity(), 
+                color = current_colour())
+        p
+    })
 }
 
 shinyApp(ui, server)
