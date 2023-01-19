@@ -9,47 +9,7 @@ library(leaflet)
 library(sp)
 library(maps)
 
-# pull in raw data
-temple_known_dates <- read.csv("./Data/temple_known_dates.csv", as.is = T)[-c(105:111), ] # unexplained NAs at the bottom from 105:111 caused be errant values in rows 15:111 and cols AN and AO in the original spreadsheet
-temple_vars <- read.csv("./Data/temple_vars.csv", as.is = T)
-temple_vol <- read.csv("./Data/qry-data.csv", as.is = T)
-
-# clean up the morphology variable
-temple_vars[grep("(east)", temple_vars$Morphology), "Morphology"] <- "horseshoe_east"
-temple_vars[grep("(north)", temple_vars$Morphology), "Morphology"] <- "horseshoe_north"
-temple_vars[grep("(west)", temple_vars$Morphology), "Morphology"] <- "horseshoe_west"
-temple_vars[grep("4causeway", temple_vars$Morphology), "Morphology"] <- "causeway_4"
-temple_vars[grep("2causeway", temple_vars$Morphology), "Morphology"] <- "causeway_2"
-temple_vars[grep("Square", temple_vars$Morphology), "Morphology"] <- "square"
-temple_vars[which(temple_vars$Morphology == ""), "Morphology"] <- NA
-
-# collate: raw is in two separate tables that can be combined for easier use and then only required variables isolated and combined into a single working dataframe
-t_dates <- data.frame(id = temple_known_dates$id,
-                    year_ce = temple_known_dates$Date.to.use)
-t_vars <- data.frame(id = temple_vars$Temple.ID,
-                    morph = as.factor(temple_vars$Morphology),
-                    azimuth = temple_vars$Azimuth,
-                    area = log(temple_vars$Area),
-                    trait_1 = temple_vars$Principle.Reservoir,
-                    trait_2 = temple_vars$Moat,
-                    trait_3 = temple_vars$Sandstone,
-                    trait_4 = temple_vars$Pink.Sandstone,
-                    trait_5 = temple_vars$Laterite,
-                    trait_6 = temple_vars$Brick,
-                    trait_7 = temple_vars$Thmaphnom,
-                    trait_8 = temple_vars$other)
-t_vol <- data.frame(id = temple_vol$Temple.ID,
-                    volume = temple_vol$TV,
-                    x = temple_vol$X,
-                    y = temple_vol$Y)
-
-# merge the two dataframesusing the id column to match while ensuring all of the rows in the vars dataframe are included
-temples <- right_join(t_dates, t_vars, by = "id") # right_join because not all temples have dates
-temples <- left_join(temples, t_vol, by = "id") # add volume data and coordinates
-
-# row 451 has a bad azimuth entry--364 degrees--so I'm removing it
-temples <- temples[-451, ]
-
+# analysis
 
 # create a vector containg the idx of covariate columnes to include in models
 
@@ -68,11 +28,15 @@ str_pattern <- paste("morph",
 
 covariate_idx <- grep(str_pattern, colnames(temples))
 
-empirically_dated_idx <- which(temples$date_type == "empirical")
+# Create a column containing only the emprical dates with all other entries
+# NA. This will be useful for the code that follows because Nimble will
+# automatically impute/predict values for NA entries.
 
+empirically_dated_idx <- which(temples$date_type == "empirical")
 temples$date_emp <- NA
 temples[empirically_dated_idx, "date_emp"] <- temples[empirically_dated_idx, "date"]
 
+# save the column idx for the new column
 date_idx <- grep("^date_emp$", names(temples))
 
 # set up a Nimble model
@@ -101,37 +65,36 @@ templeCode <- nimbleCode({
     }
 })
 
-# subset only complete cases where complete excludes columns containing data not used in the model
+# subset only complete cases where complete excludes columns containing data 
+# not used in the model but that does include the emprical dates, which will
+# be the observed response values in the regression
 temples_complete <- temples[complete.cases(temples[, c(date_idx, covariate_idx)]), ]
 
-# the following is hot encoding, but it's a legacy from an earlier model---now using index variables defined for temples_idx_morph
-temples_onehot_morph <- pivot_wider(temples_complete, 
-                                    names_from = morph, 
-                                    values_from = morph, 
-                                    values_fill = 0, 
-                                    values_fn = function(x)as.numeric(!is.na(x)))
+# the numble model can only work with numeric data, so all tibble columns have 
+# to be converted and the table needs to be recast as data.frame so at the same 
+# time we can just select the covariates and pass this new numeric df to the 
+# nimble model as the x variable in templeData below
 
-# don't remember what I was doing with the next two lines...
-#temples_idx_morph <- temples_complete
-#temples_idx_morph$morph <- as.numeric(temples_idx_morph$morph)
+x <- mutate(temples_complete[, covariate_idx], across(morph:trait_8, as.numeric))
 
-# the numble model can only work with numeric data, so all tibble columns have to be converted and the table needs to be recast as data.frame
-# so at the same time we can just select the covariates and pass this new numeric df to the nimble model as the x variable in templeData below
+# it also can't be a tibble, so...
 
-temples_complete_numeric <- as.data.frame(mutate(temples_complete[, covariate_idx],across(morph:trait_8, as.numeric)))
+x <- as.data.frame(x)
 
-M <- length(levels(temples$morph))
-H <- 8
-Cont <- 2
-J <- H + Cont
-N <- nrow(temples_complete)
+# save some useful parameters to pass to the nimble model, like number of
+# observations etc.
+M <- length(levels(temples$morph)) # number of temple morpho types
+H <- 8 # number of binary variables
+Cont <- 2 # number of continuous variables
+J <- H + Cont # total number of variables (covariates/predictors)
+N <- nrow(temples_complete) # N obs.
 
-templeConsts <- list(a = rep(1, H), # a,b are the parameters of the Beta priors for the hot-encoded data and these are naive
-                    b = rep(1, H),
-                    N = N, # number of observations (temples)
-                    M = M, # number of potential morpho types (more types than are present in the complete.cases data)
-                    H = H, # number of binary predictor variables
-                    J = J, # total number of predictor variables
+templeConsts <- list(a = rep(1, H), # beta prior
+                    b = rep(1, H), # beta prior
+                    N = N,
+                    M = M,
+                    H = H,
+                    J = J,
                     d_alpha = rep(1, M)) # parameter vector for Dirichlet prior
 
 templeData <- list(temple_age = temples_complete$date_emp,
@@ -143,7 +106,7 @@ templeInits <- list(theta = rep(0.5, H),
                     morpho = rep(0, M),
                     sigma = 100)
 
-temple <- nimbleModel(code = templeCode,
+templeModel <- nimbleModel(code = templeCode,
                 name = "temple",
                 constants = templeConsts,
                 data = templeData,
@@ -157,7 +120,7 @@ params_to_track <- c("beta0",
                     "mu", 
                     "temple_age")
 
-mcmc_out <- nimbleMCMC(model = temple,
+mcmc_out <- nimbleMCMC(model = templeModel,
                         niter = 40000,
                         nburnin = 5000,
                         summary = T,
@@ -209,34 +172,7 @@ plt_cv
 ggsave(filename = "Output/cv_mad.pdf", 
         device = "pdf")
 
-traceplot(mcmc(mcmc_out$samples[, "morpho_prob[2]"]))
-
-pairs(mcmc_out$samples[, c(11:18)])
-
-# lm for comparison
-lm_temples <- lm(year_ce ~
-                -1 +
-                azimuth + 
-                area + 
-                trait_1 + 
-                trait_2 + 
-                trait_3 + 
-                trait_4 + 
-                trait_5 + 
-                trait_6 + 
-                trait_8 +
-                horseshoe_east +
-                causeway_2 +
-                square +
-                horseshoe_north +
-                causeway_4 +
-                blob,
-                data = temples_onehot_morph)
-
-summary(lm_temples)
-
 # IQR and median temple volumes over time
-
 temple_age_samples <- mcmc_out$samples[, grep("temple_age", colnames(mcmc_out$samples))]
 dim(temple_age_samples)
 
