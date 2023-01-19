@@ -68,6 +68,13 @@ str_pattern <- paste("morph",
 
 covariate_idx <- grep(str_pattern, colnames(temples))
 
+empirically_dated_idx <- which(temples$date_type == "empirical")
+
+temples$date_emp <- NA
+temples[empirically_dated_idx, "date_emp"] <- temples[empirically_dated_idx, "date"]
+
+date_idx <- grep("^date_emp$", names(temples))
+
 # set up a Nimble model
 templeCode <- nimbleCode({
     beta0 ~ dnorm(0, sd = 1000)
@@ -94,8 +101,8 @@ templeCode <- nimbleCode({
     }
 })
 
-# subset only complete cases where complete excludes coordinate (x,y) columns
-temples_complete <- temples[complete.cases(temples[, c(2, covariate_idx)]), ]
+# subset only complete cases where complete excludes columns containing data not used in the model
+temples_complete <- temples[complete.cases(temples[, c(date_idx, covariate_idx)]), ]
 
 # the following is hot encoding, but it's a legacy from an earlier model---now using index variables defined for temples_idx_morph
 temples_onehot_morph <- pivot_wider(temples_complete, 
@@ -104,14 +111,20 @@ temples_onehot_morph <- pivot_wider(temples_complete,
                                     values_fill = 0, 
                                     values_fn = function(x)as.numeric(!is.na(x)))
 
-temples_idx_morph <- temples_complete
-temples_idx_morph$morph <- as.numeric(temples_idx_morph$morph)
+# don't remember what I was doing with the next two lines...
+#temples_idx_morph <- temples_complete
+#temples_idx_morph$morph <- as.numeric(temples_idx_morph$morph)
+
+# the numble model can only work with numeric data, so all tibble columns have to be converted and the table needs to be recast as data.frame
+# so at the same time we can just select the covariates and pass this new numeric df to the nimble model as the x variable in templeData below
+
+temples_complete_numeric <- as.data.frame(mutate(temples_complete[, covariate_idx],across(morph:trait_8, as.numeric)))
 
 M <- length(levels(temples$morph))
 H <- 8
 Cont <- 2
 J <- H + Cont
-N <- nrow(temples_idx_morph)
+N <- nrow(temples_complete)
 
 templeConsts <- list(a = rep(1, H), # a,b are the parameters of the Beta priors for the hot-encoded data and these are naive
                     b = rep(1, H),
@@ -121,8 +134,8 @@ templeConsts <- list(a = rep(1, H), # a,b are the parameters of the Beta priors 
                     J = J, # total number of predictor variables
                     d_alpha = rep(1, M)) # parameter vector for Dirichlet prior
 
-templeData <- list(temple_age = temples_idx_morph$year_ce,
-                    x = temples_idx_morph[, covariate_idx])
+templeData <- list(temple_age = temples_complete$date_emp,
+                    x = temples_complete_numeric)
 
 templeInits <- list(theta = rep(0.5, H),
                     beta0 = 0,
@@ -155,7 +168,7 @@ mcmc_out$summary
 
 # look at MAD for the model
 idx_mu <- grep("mu",colnames(mcmc_out$samples))
-summary(abs(temples_idx_morph$year_ce - colMeans(mcmc_out$samples[, idx_mu])))
+summary(abs(temples_complete$date_emp - colMeans(mcmc_out$samples[, idx_mu])))
 
 # MAE (AAE, MAD) loss function for cv
 MADlossFunction <- function(simulatedDataValues, actualDataValues){
