@@ -1,6 +1,7 @@
 # load libraries
 library(nimble)
 library(coda)
+library(tidyverse)
 library(tidyr)
 library(dplyr)
 library(ggplot2)
@@ -8,10 +9,116 @@ library(ggpubr)
 library(leaflet)
 library(sp)
 library(maps)
+library(readxl)
+
+# data wrangling
+
+# pull in the data from Excel sheets and CSVs as needed
+
+# get sheet names
+sheets <- excel_sheets("./Data/20180416_Urban_Morphology_Tables1-3.xlsx")
+sheets
+
+# pull the variables sheet ("Measures")
+temple_vars <- read_excel("./Data/20180416_Urban_Morphology_Tables1-3.xlsx", 
+                    sheet = sheets[2])
+
+# new dates from a new SI
+sheets <- excel_sheets("./Data/si_tables_updated.xlsx")
+temple_known_dates <- read_excel("./Data/si_tables_updated.xlsx", 
+                    sheet = sheets[1])
+
+# next, we need to subset the new SI table to extract only the columns with a 
+# Klassen ID because those are the ones for which we also have
+# predictor variables (the basis for modelled dates)
+temple_known_dates <- filter(temple_known_dates, Klassen_Temple_ID != 0)
+
+# isolate the relevant columns and rearrange them to my liking
+temple_known_dates <- temple_known_dates[, c(4, 1, 13, 14, 21, 22)]
+
+# from the "dating notes" column create a simpler column that indicates the 
+# source of the date
+date_type_regression_idx <- str_which(temple_known_dates[, 4][[1]], "regression")
+date_type_ssl_idx <- str_which(temple_known_dates[, 4][[1]], "graph-based")
+
+temple_known_dates$DateType <- "empirical"
+temple_known_dates[date_type_regression_idx, "DateType"] <- "regression"
+temple_known_dates[date_type_ssl_idx, "DateType"] <- "graphbased"
+
+# rename cols
+col_names <- c("id", "name", "date", "dating_notes", "xlong", "ylat", "date_type")
+names(temple_known_dates) <- col_names
+
+# remove duplicated rows (duplicated on the basis of the Klassen ID column, 
+# but I noticed at least one case where a duplicate also had a different date),
+# so this has to be revisted...
+
+dups_idx <- duplicated(temple_known_dates$id)
+
+temple_known_dates <- temple_known_dates[!dups_idx, ]
+
+# warning message says there's a bad entry: Expecting numeric in F1047 / 
+# R1047C6: got '82.827-17' the cell reference doesn't account for column 
+# headers in the spreadsheet, which means the offending entry would be 
+# in row 1046 after import into R
+
+temple_vars[1046, ]
+
+# the column reference is "F", which is the Azimuth data and from above we can 
+# see that it's been converted to NA on import. searching the original 
+# spreadsheet brings up the same row and the bad azimuth entry can be seen in 
+# F1047 as the warning message indicated. The value can be imputed like any 
+# other missing data so we'll leave the entry in with NA for the Azimuth
+
+# clean up the morphology column and simplify the names, removing special characters
+temple_vars[grep("(east)", temple_vars$Morphology), "Morphology"] <- "horseshoe_east"
+temple_vars[grep("(north)", temple_vars$Morphology), "Morphology"] <- "horseshoe_north"
+temple_vars[grep("(west)", temple_vars$Morphology), "Morphology"] <- "horseshoe_west"
+temple_vars[grep("4causeway", temple_vars$Morphology), "Morphology"] <- "causeway_4"
+temple_vars[grep("2causeway", temple_vars$Morphology), "Morphology"] <- "causeway_2"
+temple_vars[grep("Square", temple_vars$Morphology), "Morphology"] <- "square"
+temple_vars[which(temple_vars$Morphology == ""), "Morphology"] <- NA
+
+# isolate relevant cols and rename
+t_vars <- data.frame(id = temple_vars$`Temple ID`,
+                    morph = as.factor(temple_vars$Morphology),
+                    azimuth = temple_vars$Azimuth,
+                    area = log(temple_vars$Area),
+                    trait_1 = temple_vars$`Principle Reservoir`,
+                    trait_2 = temple_vars$Moat,
+                    trait_3 = temple_vars$Sandstone,
+                    trait_4 = temple_vars$`Pink Sandstone`,
+                    trait_5 = temple_vars$Laterite,
+                    trait_6 = temple_vars$Brick,
+                    trait_7 = temple_vars$Thmaphnom,
+                    trait_8 = temple_vars$other)
+
+# join date and variable tables
+
+temples <- left_join(temple_known_dates, t_vars, by = "id")
+
+# pull in volumetric data
+
+temple_vol <- read.csv("./Data/qry-data.csv", as.is = T)
+
+t_vol <- data.frame(id = temple_vol$Temple.ID,
+                    vol_temple = temple_vol$TV,
+                    vol_reservoir = temple_vol$RV,
+                    xeast = temple_vol$X,
+                    ynorth = temple_vol$Y)
+
+# join again, adding volumes to the main dataframe
+
+temples <- left_join(temples, t_vol, by = "id")
+
+# the principle dataset from here on is now the "temples" dataframe/tibble
+# write it as a csv so that I can switch scripts and clear the R workspace 
+# of intermediary variables created above while cleaning the data
+write.csv(temples, file = "./Data/temples.csv", row.names = F)
 
 # analysis
 
-# create a vector containg the idx of covariate columnes to include in models
+# create a vector containg the idx of covariate columns to include in models
 
 str_pattern <- paste("morph",
                     "azimuth",
@@ -51,14 +158,14 @@ templeCode <- nimbleCode({
     }
     sigma ~ dunif(0, 1000) # prior variance for regression model
     for(h in 1:H){
-        theta[h] ~ dbeta(a[h], b[h]) # prior for hot-encoded vars
+        theta[h] ~ dbeta(a[h], b[h]) # prior for binary vars
     }
     for(n in 1:N){
         x[n, 1] ~ dcat(prob = morpho_prob[1:M])
         x[n, 2] ~ dunif(min = 1, max = 360) # azimuth
         x[n, 3] ~ dlnorm(meanlog = 2, sdlog = 0.2) # area
         for(h in 1:H){
-            x[n, 3 + h] ~ dbern(theta[h]) # hot-encoded covariates
+            x[n, 3 + h] ~ dbern(theta[h]) # binary covariates
         }
         mu[n] <- morpho[x[n, 1]] + inprod(beta[1:J], x[n, 2:(J + 1)])
         temple_age[n] ~ dnorm(mu[n], sd = sigma) # core model
@@ -98,7 +205,7 @@ templeConsts <- list(a = rep(1, H), # beta prior
                     d_alpha = rep(1, M)) # parameter vector for Dirichlet prior
 
 templeData <- list(temple_age = temples_complete$date_emp,
-                    x = temples_complete_numeric)
+                    x = x)
 
 templeInits <- list(theta = rep(0.5, H),
                     beta0 = 0,
@@ -127,7 +234,7 @@ mcmc_out <- nimbleMCMC(model = templeModel,
                         WAIC = T,
                         monitors = params_to_track)
 
-mcmc_out$summary
+mcmc_out$summary[1:10, ]
 
 # look at MAD for the model
 idx_mu <- grep("mu",colnames(mcmc_out$samples))
@@ -139,10 +246,10 @@ MADlossFunction <- function(simulatedDataValues, actualDataValues){
   return(MAD)
 }
 
-cv_config <- configureMCMC(model = temple)
+cv_config <- configureMCMC(model = templeModel)
 
 cv_out <- runCrossValidate(MCMCconfiguration = cv_config,
-                            k = nrow(temples_idx_morph),
+                            k = nrow(temples_complete),
                             lossFunction = MADlossFunction,
                             MCMCcontrol = list(niter = 30000, nburnin = 3000),
                             nCores = 1,
@@ -154,9 +261,14 @@ cv_mad <- do.call(rbind,cv_out$foldCVinfo)[, 1]
 # look at the distribution of cross-validated (leave-one-out) MAD values:
 cv_mad_rnd <- round(summary(cv_mad))
 quantile_labels <- row.names(cv_mad_mat)
-cv_quantile_ann <- mapply(function(x, y){paste(x, y, sep = ": ")},quantile_labels,cv_mad_mat)
-cv_plot_ann <- data.frame(x = rep(200, 6), y = seq(20, 15, -1), label = cv_quantile_ann)
-cv_mad_df <- data.frame(fold = 1:length(cv_mad), mad = cv_mad)
+cv_quantile_ann <- mapply(function(x, y){paste(x, y, sep = ": ")}, 
+                            quantile_labels, 
+                            cv_mad_mat)
+cv_plot_ann <- data.frame(x = rep(200, 6), 
+                            y = seq(20, 15, -1), 
+                            label = cv_quantile_ann)
+cv_mad_df <- data.frame(fold = 1:length(cv_mad), 
+                        mad = cv_mad)
 plt_cv <- ggplot(data = cv_mad_df) +
         geom_histogram(mapping = aes(x = mad), 
             bins = 6,
@@ -164,7 +276,10 @@ plt_cv <- ggplot(data = cv_mad_df) +
         labs(title = "Temple Age Prediction Errors",
         y = "Frequency",
         x = "Mean Absolue Deviation") +
-        geom_text(data = cv_plot_ann, aes(x = x, y = y, label = label), hjust = 0, size = 10) +
+        geom_text(data = cv_plot_ann, 
+                    aes(x = x, y = y, label = label), 
+                    hjust = 0, 
+                    size = 10) +
         theme_minimal(base_size = 20) +
         theme(plot.title = element_text(hjust = 0.5))
 plt_cv
