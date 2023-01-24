@@ -148,10 +148,11 @@ date_idx <- grep("^date_emp$", names(temples))
 
 # set up a Nimble model
 templeCode <- nimbleCode({
-    beta0 ~ dnorm(0, sd = 1000)
+    beta0 ~ dnorm(1000, sd = 400)
+    sigma0 ~ dunif(0, sd = 500) # prior variance for morpho types (index variable)
     morpho_prob[1:M] ~ ddirch(alpha = d_alpha[1:M])
     for(m in 1:M){
-        morpho[m] ~ dnorm(beta0, sd = 200)
+        morpho[m] ~ dnorm(beta0, sd = sigma0)
     }
     for(j in 1:J){
         beta[j] ~ dnorm(0, sd = 100) # regression coefs
@@ -209,6 +210,7 @@ templeData <- list(temple_age = temples_complete$date_emp,
 
 templeInits <- list(theta = rep(0.5, H),
                     beta0 = 0,
+                    sigma0 = 200,
                     beta = rep(0, J),
                     morpho = rep(0, M),
                     sigma = 100)
@@ -219,7 +221,8 @@ templeModel <- nimbleModel(code = templeCode,
                 data = templeData,
                 inits = templeInits)
 
-params_to_track <- c("beta0", 
+params_to_track <- c("beta0",
+                    "sigma0",
                     "morpho", 
                     "morpho_prob", 
                     "beta", 
@@ -234,7 +237,7 @@ mcmc_out <- nimbleMCMC(model = templeModel,
                         WAIC = T,
                         monitors = params_to_track)
 
-mcmc_out$summary[1:10, ]
+mcmc_out$summary[1:11, ]
 
 # look at MAD for the model
 idx_mu <- grep("mu",colnames(mcmc_out$samples))
@@ -249,12 +252,12 @@ MADlossFunction <- function(simulatedDataValues, actualDataValues){
 cv_config <- configureMCMC(model = templeModel)
 
 cv_out <- runCrossValidate(MCMCconfiguration = cv_config,
-                            k = nrow(temples_complete),
+                            k = 50, #nrow(temples_complete),
                             lossFunction = MADlossFunction,
-                            MCMCcontrol = list(niter = 30000, nburnin = 3000),
+                            MCMCcontrol = list(niter = 20000, nburnin = 5000),
                             nCores = 1,
                             nBootReps = NA,
-                            silent = T)
+                            silent = F)
 
 cv_mad <- do.call(rbind,cv_out$foldCVinfo)[, 1]
 
