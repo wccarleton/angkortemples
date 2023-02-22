@@ -11,9 +11,14 @@ temples$emprical_date <- NA
 dated_temples <- which(temples$date_type == "empirical")
 temples[dated_temples, "emprical_date"] <- temples[dated_temples, "date"]
 
+# copy temples to a new variable b/c the gssl has different formatting and data 
+# imputation requirements than the bayesian nimble model
+
+temples_gssl <- temples
+
 # rescale azimuth and area to (0,1)
-temples$azimuth <- temples$azimuth / max(temples$azimuth, na.rm = T)
-temples$area <- temples$area / max(temples$area, na.rm = T)
+temples_gssl$azimuth <- temples_gssl$azimuth / max(temples_gssl$azimuth, na.rm = T)
+temples_gssl$area <- temples_gssl$area / max(temples$area, na.rm = T)
 
 # select temple data colums and then arrange for conformity with the 
 # label propagation function expectations
@@ -48,8 +53,7 @@ cat_idx <- setdiff(new_col_idx,
 
 # convert every column to a numeric type and give NA a numeric value that
 # depends on the given variable type. This gets around using a large number 
-# of logical comparisons, which will likely be slower in R because the
-# underlying R code for logicals includes checking for NA
+# of logical comparisons, which would like be slower
 
 x <- temples[, rearranged_col_idx]
 
@@ -59,8 +63,9 @@ x <- temples[, rearranged_col_idx]
 # Then, set NAs to something else (not one of the integer levels)---easy 
 # to just add one to the max level and use that number
 x$morph <- as.numeric(factor(x$morph))
-x$morph[which(is.na(x$morph))] <- max(x$morph, na.rm = T) + 1
 
+
+x$morph[which(is.na(x$morph))] <- max(x$morph, na.rm = T) + 1
 y <- as.matrix(x[, cat_idx])
 y[which(is.na(y))] <- 2
 x[, cat_idx] <- y
@@ -83,7 +88,7 @@ propagate_labels <- function(x, cat_idx, cont_idx){
     unlabelled <- as.matrix(x[unlabelled_idx, ])
     labelled <- as.matrix(x[labelled_idx, ])
 
-    # set machine precision manually with a variable
+    # set precision manually with a variable, as per the original python code
     eps <- 0.2
 
     # calculate weights
@@ -99,8 +104,7 @@ propagate_labels <- function(x, cat_idx, cont_idx){
         # subtracting here means that any pair of elements with the same value
         # (even NA, which has been set to 2 or 9 above depending on the variable)
         # will yield a 0, so we can then just count zeros...
-        # rowSums only works with length(dim) > 1, so in order to perform
-        # leave-one-out as planned, I need to add a check here
+        # rowSums only works with length(dim) > 1, so check here
         if(is.matrix(d)){
             sim <- rowSums(d == 0)
             a <- (unlabelled[, cont_idx] - v[, cont_idx])**2
@@ -154,7 +158,7 @@ propagate_labels <- function(x, cat_idx, cont_idx){
 
     guesses = round(lsqr_label_predictions, 0)
 
-    # return a list contianing the computed arrays
+    # return a list containing the computed arrays
 
     return(list(labels = guesses,
                 w_uu = w_uu, 
@@ -190,3 +194,10 @@ for(k in 1:n_loo){
     predicted_dates[k] <- gssl_dates$labels
     labelled_temples[k, 1] <- left_out_date
 }
+
+abs_devs <- abs(labelled_temples$emprical_date - predicted_dates)
+
+write.table(abs_devs, 
+        file = "Output/cv_abs_devs_gssl.csv",
+        row.names = F,
+        col.names = F)
