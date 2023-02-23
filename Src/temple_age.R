@@ -105,7 +105,11 @@ t_xy <- data.frame(id = temple_xy$Temple.ID,
 
 # join again, adding volumes to the main dataframe
 
-temples <- left_join(temples, t_vol, by = "id")
+temples <- left_join(temples, t_xy, by = "id")
+
+# NOTE there is a bad azimuth entry in row 1239, so here we set it to NA
+
+temples[1239, "azimuth"] <- NA
 
 # the principle dataset from here on is now the "temples" dataframe/tibble
 # write it as a csv so that I can switch scripts and clear the R workspace 
@@ -476,74 +480,194 @@ plt_cv_compared <- ggplot(data = ad_both) +
 
 plt_cv_compared
 
-# look at the distribution of cross-validated (leave-one-out) ad values:
-cv_mad_rnd <- round(summary(cv_ad))
-cv_mad_mat <- as.matrix(cv_mad_rnd)
-quantile_labels <- row.names(cv_mad_mat)
-cv_quantile_ann <- mapply(function(x, y){paste(x, y, sep = ": ")}, 
-                            quantile_labels, 
-                            cv_mad_mat)
-cv_plot_ann <- data.frame(x = rep(300, 6), 
-                            y = seq(from = 20, by = -2, length.out = 6), 
-                            label = cv_quantile_ann)
-cv_mad_df <- data.frame(fold = 1:length(cv_ad), 
-                        mad = cv_ad)
-plt_cv <- ggplot(data = cv_mad_df) +
-        geom_histogram(mapping = aes(x = mad),
-            color = "grey",
-            boundary = 0) +
-        labs(title = "Temple Age Prediction Errors",
-        y = "Frequency",
-        x = "Absolue Deviation in Years") +
-        geom_text(data = cv_plot_ann, 
-                    aes(x = x, y = y, label = label), 
-                    hjust = 0, 
-                    size = 10) +
-        theme_minimal(base_size = 20) +
-        theme(plot.title = element_text(hjust = 0.5))
-plt_cv
-
-ggsave(filename = "Output/cv_mad.pdf", 
+ggsave(filename = "Output/cv_ad_compared.pdf", 
         device = "pdf")
 
-# have a look at temple counts per period including dating uncertainties
+# have a look at temple counts per period 
+# in one plot, show the series using the GSSL labels, and in the other show the
+# series from the Bayesian model including dating uncertainties
+
+x <- mutate(temples[, covariate_idx],
+            across(morph:trait_8, as.numeric))
+x <- as.data.frame(x)
+
+date_emp <- temples$date_emp
+
+# GSSL
+temples_gssl <- cbind(date_emp, x)
+
+# next, identify the categorical and continuous data columns because GSSL
+# treats these types differently
+
+cont_idx <- grep("azimuth|area", colnames(temples_gssl))
+cat_idx <- setdiff(1:ncol(temples_gssl), cont_idx)[-1]
+
+# GSSL process doesn't treat NA values differently from any other potential
+# value, so just convert them to a numerical value
+na_idx <- which(is.na(temples_gssl[, "morph"]))
+temples_gssl[na_idx, "morph"] <- max(temples_gssl[, "morph"], na.rm = T) + 1
+categories <- as.matrix(temples_gssl[, cat_idx])
+categories[which(is.na(categories))] <- 2
+temples_gssl[, cat_idx] <- categories
+
+# rescale azimuth and area to (0,1)
+max_azimuth <- max(temples_gssl[, "azimuth"], na.rm = T)
+temples_gssl[, "azimuth"] <- temples_gssl[, "azimuth"] / max_azimuth
+max_area <- max(temples_gssl[, "area"], na.rm = T)
+temples_gssl[, "area"] <- temples_gssl[, "area"] / max_area
+
+# provide values for missing data in the continuous variables as per
+# the PLoS paper methods and python code
+na_idx <- which(is.na(temples_gssl[, "azimuth"]))
+temples_gssl[na_idx, "azimuth"] <- 0.5
+na_idx <- which(is.na(temples_gssl[, "area"]))
+temples_gssl[na_idx, "area"] <- 0.5
+
+
+# now, run the gssl and extract the temple foundation date estimates
+
+gssl_dates <- propagate_labels(x = temples_gssl,
+                                cat_idx = cat_idx,
+                                cont_idx = cont_idx)
+
+# Bayesian model
+# run the model again including all the data, not just the dated temples that 
+# were used above to evaluate the model's performance. we only need to change
+# the variables related to the new dataset. note that this run will take
+# a fair while longer to complete because n is going from 169 to 1300, which
+# greatly increases the number of parameters to sample since we're also
+# imputing the NAs in each case.
+
+N <- nrow(temples) # N obs.
+
+templeConsts <- list(a = rep(1, H), # beta prior
+                    b = rep(1, H), # beta prior
+                    N = N,
+                    M = M,
+                    H = H,
+                    J = J,
+                    d_alpha = rep(1, M)) # parameter vector for Dirichlet prior
+
+templeData <- list(temple_age = temples$date_emp,
+                    x = x)
+
+templeInits <- list(theta = rep(0.5, H),
+                    beta0 = 1000,
+                    sigma0 = 200,
+                    beta = rep(0, J),
+                    morpho = rep(0, M),
+                    sigma = 100)
+
+templeModel <- nimbleModel(code = templeCode,
+                name = "temple",
+                constants = templeConsts,
+                data = templeData,
+                inits = templeInits)
+
+params_to_track <- c("beta0",
+                    "sigma0",
+                    "morpho", 
+                    "morpho_prob", 
+                    "beta", 
+                    "sigma", 
+                    "mu", 
+                    "temple_age")
+
+# mcmc config options
+
+# change default block sampling for beta[] and morpho[] to AF_slice
+templeModel_c <- compileNimble(templeModel)
+temple_mcmc_config <- configureMCMC(templeModel_c)
+temple_mcmc_config$removeSamplers(c("beta", "morpho"))
+temple_mcmc_config$addSampler(target = c("beta", "morpho"), type = "AF_slice")
+temple_mcmc_config$setMonitors(params_to_track)
+
+# build mcmc
+temple_mcmc <- buildMCMC(temple_mcmc_config)
+temple_mcmc_c <- compileNimble(temple_mcmc)
+
+# run mcmc
+
+mcmc_out <- runMCMC(temple_mcmc_c, 
+                    niter = 50000,
+                    nburnin = 5000)
+
+# Next, take the MCMC samples for the predicted temple foundation dates and 
+# bin them (count temple foundations per period) for each MCMC iteration.
+
+temple_age_idx <- grep("temple_age", colnames(mcmc_out))
+temple_age_samples <- mcmc_out[, temple_age_idx]
+
+# create a container for the counts---each row will refer to one temporal bin,
+# while each column will contain one probable count sequence of temple
+# foundation events
 temple_counts <- array(dim = c(nrow(temple_age_samples), nbins))
 
+# write a function for counting temple foundations given the age samples, a
+# starting time (datum), time bin width (delta), and number of desired bins.
+# note that the bins will be defined by their lower date edge.
 period_counts <- function(x, 
                         datum, 
                         delta, 
-                        bins) {
+                        nbins) {
     bin_idx <- floor((x - datum) / delta) + 1
-    nbins <- length(bins)
     counts <- rep(NA, nbins)
     for(j in 1:nbins) {
-        counts[j] <- sum(bin_idx == bins[j])
+        counts[j] <- sum(bin_idx == j)
     }
     return(counts)
 }
 
+# plot results of both models
+
+# choose the parameters for the temporal binning
+datum <- 700
+delta <- 100
+nbins <- 7
+
+# loop over the rows (MCMC iterations) of the temple_age_samples matrix and 
+# then store the counts
 for(j in 1:nrow(temple_age_samples)){
     temple_counts[j, ] <- period_counts(x = temple_age_samples[j, ],
                                         datum = datum,
                                         delta = delta,
-                                        bins = bins)
+                                        nbins = nbins)
 }
 
+temple_counts_gssl <- period_counts(x = as.vector(gssl_dates$labels),
+                                    datum = datum,
+                                    delta = delta,
+                                    nbins = nbins)
+
+# for easier plotting, we can make it a dataframe and use ggplot2 tools
+periods <- 1:nbins
+
+period_labs <- paste(seq(from = datum + (delta / 2), 
+                        by = delta, 
+                        length.out = nbins))
+
 count_samples_df = as.data.frame(temple_counts)
-colnames(count_samples_df) <- period_names
+colnames(count_samples_df) <- periods
 count_samples_long <- pivot_longer(count_samples_df, 
                                 cols = everything(), 
-                                names_to="period", 
-                                values_to = "count")
+                                names_to = "period", 
+                                values_to = "bayes_count")
+
+count_samples_long$gssl_count <- rep(temple_counts_gssl, dim(temple_counts)[1])
 
 plt_count <- ggplot() +
-    geom_boxplot(data = subset(count_samples_long, period %in% period_names[focal_periods]), 
-            mapping = aes(x = period, y = count),
+    geom_boxplot(data = count_samples_long, 
+            mapping = aes(x = period, y = bayes_count),
             fill = "#008100",
-            colour = "black",#"green",
+            colour = "black",
             outlier.shape = 1,
             alpha = 0.75) +
-    scale_x_discrete(labels = period_labels[focal_periods]) +
+    geom_boxplot(data = count_samples_long,
+            mapping = aes(x = period, y = gssl_count),
+            colour = "#a5eca5",
+            alpha = 0.75,
+            size = 2) +
+    scale_x_discrete(labels = period_labs) +
     labs(title = "Temple Counts per Period",
         y = "count",
         x = "Period Midpoints in Years CE") +
