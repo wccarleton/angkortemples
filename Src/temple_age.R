@@ -678,6 +678,116 @@ plt_count
 ggsave(filename = "Output/AngkorTemples_counts.pdf", 
         device = "pdf")
 
+
+# Variable selection
+
+# There are two types of "predictor" variables in the model: 1) morpho types, 
+# which are modelled with index variables because they are a set of exclusive 
+# categories [each temple must be one and only one morpho type]; and 2) a set of 
+# continuous variables and binary variables that are not mutually exclusive 
+# like the morpho types. To examine the impact of the morpho types (mutally
+# exclusive categories), we can examine the pairwise differences between
+# the postorior samples. In the model, the morpho type parameter acts as a 
+# intercept would and temples of each category are able to have different
+# intercepts. The actual values are in calendar years, so the posterior for 
+# a morpho type parameter (e.g., morpho[1], morpho[2],...) represents the
+# average foundation year for temples of that type. By comparing them by way
+# of contrast distributions we can determine whether any of the morpho
+# types were on average older/younger than one or more of the others.
+
+# First, plot all of them as densities on the same timeline
+
+# next, calculate pairwise posterior contrasts and plot those densities---any
+# that differ significantly from zero would indicate an average foundation
+# date difference between the relevant morpho types.
+
+# Next, we can look at the impact of the other predictor variables on the 
+# estimated temple ages.
+
+# There are multiple ways this could ultimately be done, but Nimble provides
+# a handy tool called "reversible jump" MCMC whereby essentially the variable
+# selection is happening throughout the simulation rather than having to
+# manually configure seperate models leaving out different variables
+# and then comparing the "fit" manually (e.g., with WAIC). Instead, we can 
+# use indicator variables to turn each variable on and off at random 
+# while exploring the model likelihood and then at the end examine the posteriors
+# for the indicator variables to determine which variables were included
+# most frequently overall. To use Nimbles RJMCMC we need to reconfigure the
+# MCMC from above.
+
+# reset data to include only dated temples again...
+
+x <- mutate(temples_dated[, covariate_idx],
+            across(morph:trait_8, as.numeric))
+x <- as.data.frame(x)
+
+N <- nrow(temples_dated) # N obs.
+
+templeConsts <- list(a = rep(1, H), # beta prior
+                    b = rep(1, H), # beta prior
+                    N = N,
+                    M = M,
+                    H = H,
+                    J = J,
+                    d_alpha = rep(1, M)) # parameter vector for Dirichlet prior
+
+templeData <- list(temple_age = temples_dated$date_emp,
+                    x = x)
+
+templeInits <- list(theta = rep(0.5, H),
+                    beta0 = 1000,
+                    sigma0 = 200,
+                    beta = rep(0, J),
+                    morpho = rep(0, M),
+                    sigma = 100)
+
+templeModel <- nimbleModel(code = templeCode,
+                name = "temple",
+                constants = templeConsts,
+                data = templeData,
+                inits = templeInits)
+
+params_to_track <- c("beta0",
+                    "sigma0",
+                    "morpho", 
+                    "morpho_prob", 
+                    "beta", 
+                    "sigma")
+
+templeModel_c <- compileNimble(templeModel)
+temple_mcmc_config <- configureMCMC(templeModel_c)
+temple_mcmc_config$setMonitors(params_to_track)
+
+configureRJ(temple_mcmc_config,
+            targetNodes = 'beta',
+            priorProb = 0.5,
+            control = list(mean = 0, scale = 0.2))
+
+# build mcmc
+temple_mcmc <- buildMCMC(temple_mcmc_config)
+temple_mcmc_c <- compileNimble(temple_mcmc)
+
+# run mcmc
+mcmc_out <- runMCMC(temple_mcmc_c, 
+                    niter = 50000,
+                    nburnin = 5000)
+
+# extract inclusion probabilities
+betas <- grep("beta\\[", colnames(mcmc_out))
+post_inclusion_probs <- colMeans(apply(mcmc_out[, betas], 
+                                2, 
+                                function(x) x != 0))
+
+# handy function for excluding zeros
+rm_zeros <- function(x){
+    zeros <- which(x == 0)
+    if(length(zeros) != 0L){
+        return(x[-zeros])
+    }else{
+        return(x)
+    }
+}
+
 # mapping temple foundation events with chronological uncertainty
 
 opacity_fun <- function(x, from, to) {
