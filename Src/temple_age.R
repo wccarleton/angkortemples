@@ -6,6 +6,7 @@ library(tidyr)
 library(dplyr)
 library(ggplot2)
 library(ggpubr)
+library(GGally)
 library(leaflet)
 library(sp)
 library(maps)
@@ -340,11 +341,11 @@ write.table(cv_ad_gssl,
 
 # set up a Nimble model
 templeCode <- nimbleCode({
-    beta0 ~ dnorm(1000, sd = 500)
-    sigma0 ~ dunif(0, 500) # prior variance for morpho types (index variable)
+    #beta0 ~ dnorm(1000, sd = 500)
+    #sigma0 ~ dunif(0, 200) # prior variance for morpho types (index variable)
     morpho_prob[1:M] ~ ddirch(alpha = d_alpha[1:M])
     for(m in 1:M){
-        morpho[m] ~ dnorm(beta0, sd = sigma0)
+        morpho[m] ~ dnorm(0, sd = 1000)#dnorm(beta0, sd = sigma0)
     }
     for(j in 1:J){
         beta[j] ~ dnorm(0, sd = 500) # regression coefs
@@ -385,8 +386,8 @@ templeData <- list(temple_age = temples_dated$date_emp,
                     x = temples_dated[, -1])
 
 templeInits <- list(theta = rep(0.5, H),
-                    beta0 = 1000,
-                    sigma0 = 200,
+                    #beta0 = 1000,
+                    #sigma0 = 200,
                     beta = rep(0, J),
                     morpho = rep(0, M),
                     sigma = 100)
@@ -397,8 +398,8 @@ templeModel <- nimbleModel(code = templeCode,
                 data = templeData,
                 inits = templeInits)
 
-params_to_track <- c("beta0",
-                    "sigma0",
+params_to_track <- c(#"beta0",
+                    #"sigma0",
                     "morpho", 
                     "morpho_prob", 
                     "beta", 
@@ -411,8 +412,8 @@ params_to_track <- c("beta0",
 # change default block sampling for beta[] and morpho[] to AF_slice
 templeModel_c <- compileNimble(templeModel)
 temple_mcmc_config <- configureMCMC(templeModel_c)
-temple_mcmc_config$removeSamplers(c("beta", "morpho"))
-temple_mcmc_config$addSampler(target = c("beta", "morpho"), type = "AF_slice")
+#temple_mcmc_config$removeSamplers(c("beta0","beta","morpho"))
+#temple_mcmc_config$addSampler(target = c("beta0", "beta", "morpho"), type = "AF_slice")
 temple_mcmc_config$setMonitors(params_to_track)
 
 # build mcmc
@@ -423,7 +424,9 @@ temple_mcmc_c <- compileNimble(temple_mcmc)
 
 mcmc_out <- runMCMC(temple_mcmc_c, 
                     niter = 50000,
-                    nburnin = 5000)
+                    nburnin = 0)
+
+plot(mcmc_out[,"morpho[1]"], type="l")
 
 # convergence checking
 nonparam_cols <- grep("mu|temple_age", colnames(mcmc_out))
@@ -455,13 +458,16 @@ for(j in 1:169){
     system2("Rscript", args=c("Src/get_ad.R", paste(j)))
 }
 
-cv_ad_bayes <- read.csv("Output/cv_abs_devs.csv", head = F)[, 1]
+cv_ad_bayes <- read.csv("Output/cv_abs_devs_2.csv", head = F)[, 1]
+cv_ad_bayes <- data.frame(deviation_years = cv_ad_bayes, model = "bayesian")
+
+cv_ad_gssl <- read.csv("Output/cv_abs_devs_gssl.csv", head = F)[, 1]
+cv_ad_gssl <- data.frame(deviation_years = cv_ad_gssl, model = "gssl")
 
 # create a long-format dataframe with the cross-validation-derived absolute
 # deviations from each of the two approaches.
 
-ad_both <- rbind(cbind(cv_ad_bayes, "bayesian"), cbind(cv_ad_gssl, "gssl"))
-ad_both <- as.data.frame(ad_both)
+ad_both <- rbind(cv_ad_bayes, cv_ad_gssl)
 ad_both[, 1] <- round(as.numeric(ad_both[, 1]), 0)
 names(ad_both) <- c("deviation_years", "model")
 
@@ -538,6 +544,15 @@ gssl_dates <- propagate_labels(x = temples_gssl,
 # greatly increases the number of parameters to sample since we're also
 # imputing the NAs in each case.
 
+x <- mutate(temples[, covariate_idx], 
+            across(morph:trait_8, as.numeric))
+
+x <- as.data.frame(x)
+
+date_emp <- temples$date_emp
+
+temples_predict <- cbind(date_emp, x)
+
 N <- nrow(temples) # N obs.
 
 templeConsts <- list(a = rep(1, H), # beta prior
@@ -548,12 +563,10 @@ templeConsts <- list(a = rep(1, H), # beta prior
                     J = J,
                     d_alpha = rep(1, M)) # parameter vector for Dirichlet prior
 
-templeData <- list(temple_age = temples$date_emp,
+templeData <- list(temple_age = temples_predict$date_emp,
                     x = x)
 
 templeInits <- list(theta = rep(0.5, H),
-                    beta0 = 1000,
-                    sigma0 = 200,
                     beta = rep(0, J),
                     morpho = rep(0, M),
                     sigma = 100)
@@ -564,9 +577,7 @@ templeModel <- nimbleModel(code = templeCode,
                 data = templeData,
                 inits = templeInits)
 
-params_to_track <- c("beta0",
-                    "sigma0",
-                    "morpho", 
+params_to_track <- c("morpho", 
                     "morpho_prob", 
                     "beta", 
                     "sigma", 
@@ -578,8 +589,6 @@ params_to_track <- c("beta0",
 # change default block sampling for beta[] and morpho[] to AF_slice
 templeModel_c <- compileNimble(templeModel)
 temple_mcmc_config <- configureMCMC(templeModel_c)
-temple_mcmc_config$removeSamplers(c("beta", "morpho"))
-temple_mcmc_config$addSampler(target = c("beta", "morpho"), type = "AF_slice")
 temple_mcmc_config$setMonitors(params_to_track)
 
 # build mcmc
@@ -588,9 +597,8 @@ temple_mcmc_c <- compileNimble(temple_mcmc)
 
 # run mcmc
 
-mcmc_out <- runMCMC(temple_mcmc_c, 
-                    niter = 50000,
-                    nburnin = 5000)
+mcmc_out_predict <- runMCMC(temple_mcmc_c, 
+                    niter = 50000)
 
 # Next, take the MCMC samples for the predicted temple foundation dates and 
 # bin them (count temple foundations per period) for each MCMC iteration.
@@ -697,6 +705,96 @@ ggsave(filename = "Output/AngkorTemples_counts.pdf",
 
 # First, plot all of them as densities on the same timeline
 
+# morpho type columns
+morpho_idx <- grep("morpho\\[", colnames(mcmc_out))
+
+posterior_contrasts <- function(x, y, ...){
+    usr <- par("usr")
+    on.exit(par("usr" = usr))
+    diffs <- x - y
+    h <- hist(diffs, plot = FALSE)
+    #d <- density(diffs)
+    xcor <- max(abs(diffs))
+    ycor <- max(h$counts)
+    #ycor <- range(d$y)
+    par(usr = c(-xcor, xcor, 0, ycor))
+    rect(-xcor, 0, 0, ycor, col = "#0000ff70")
+    rect(0, 0, xcor, ycor, col = "#018a016c")
+    #lines(x = d$x, y = d$y)
+    hist(diffs, add = TRUE, border = "white", col = "white")
+    abline(v = 0)
+}
+
+gg_posterior_contrasts <- function(data, mapping, ...){
+    x <- rlang::eval_tidy(mapping$x, data)
+    y <- rlang::eval_tidy(mapping$y, data)
+    d <- data.frame(diffs = x - y)
+    xcor <- max(abs(d))
+    #xcor <- 10
+    h <- hist(d$diffs, plot = F)
+    bw <- mean(diff(h$mids))
+    ggplot() +
+        geom_area(data = NULL, 
+            mapping = aes(x = c(-xcor, 0), y = 1),
+            fill = "steelblue",
+            alpha = 0.75) +
+        geom_area(data = NULL, 
+            mapping = aes(x = c(0, xcor), y = 1),
+            fill = "darkgreen",
+            alpha = 0.75) +
+        stat_bin(data = d, 
+            mapping = aes(x = diffs, y = stat(count / max(count))),
+            geom = "step",
+            color = "black",
+            #fill = "transparent",
+            binwidth = bw)
+}
+
+#hist(apply(mcmc_out[, morpho_idx[c(1, 6)]], 1,diff))
+
+morpho_type_df <- as.data.frame(mcmc_out[, morpho_idx])
+
+plt_contrasts <- ggpairs(morpho_type_df,
+                        lower = list(
+                                continuous = gg_posterior_contrasts),
+                        upper = "blank",
+                        diag = "blank") +
+                theme_minimal(base_size = 12) +
+                theme(plot.title = element_text(hjust = 0.5))
+
+plt_contrasts
+
+pairs(mcmc_out[, morpho_idx],
+    lower.panel = posterior_contrasts,
+    upper.panel = NULL)
+
+# plot all densities on single timeline
+morpho_type_df_long <- pivot_longer(morpho_type_df,
+                                    cols = everything(),
+                                    names_to = "morpho_type",
+                                    values_to = "date")
+
+morpho_labels_map <- levels(temples$morph)
+names(morpho_labels_map) <- paste("morpho[",1:8,"]",sep = "")
+morpho_labeller <- labeller(morpho_type = morpho_labels_map)
+
+ggplot(data = subset(morpho_type_df_long, morpho_type != "morpho[7]")) + 
+    geom_density(mapping = aes(x = date, fill = morpho_type),
+                alpha = 0.75,
+                position = "identity") +
+    xlim(c(600, 1400)) +
+    geom_vline(xintercept = c(800, 1400)) +
+    facet_wrap(~ morpho_type, 
+        ncol = 1,
+        labeller = morpho_labeller) +
+    labs(title = "Temple Morpho Type Marginal Date Posteriors",
+        x = "Date (Years CE)") +
+    theme_minimal(base_size = 12) +
+    theme(plot.title = element_text(hjust = 0.5))
+
+ggsave(filename = "Output/AngkorTemples_morpho_types.pdf", 
+        device = "pdf")
+
 # next, calculate pairwise posterior contrasts and plot those densities---any
 # that differ significantly from zero would indicate an average foundation
 # date difference between the relevant morpho types.
@@ -747,8 +845,8 @@ templeModel <- nimbleModel(code = templeCode,
                 data = templeData,
                 inits = templeInits)
 
-params_to_track <- c("beta0",
-                    "sigma0",
+params_to_track <- c(#"beta0",
+                    #"sigma0",
                     "morpho", 
                     "morpho_prob", 
                     "beta", 
@@ -768,15 +866,36 @@ temple_mcmc <- buildMCMC(temple_mcmc_config)
 temple_mcmc_c <- compileNimble(temple_mcmc)
 
 # run mcmc
-mcmc_out <- runMCMC(temple_mcmc_c, 
-                    niter = 50000,
-                    nburnin = 5000)
+mcmc_out_var <- runMCMC(temple_mcmc_c, 
+                        niter = 50000,
+                        nburnin = 5000)
 
 # extract inclusion probabilities
-betas <- grep("beta\\[", colnames(mcmc_out))
-post_inclusion_probs <- colMeans(apply(mcmc_out[, betas], 
+betas <- grep("beta\\[", colnames(mcmc_out_var))
+post_inclusion_probs <- colMeans(apply(mcmc_out_var[, betas], 
                                 2, 
                                 function(x) x != 0))
+
+# make a nice table for export
+model_names <- colnames(temples)[covariate_idx][-1]
+
+variable_names <- c("azimuth",
+                    "area",
+                    "principle reservoir",
+                    "moat",
+                    "sandstone",
+                    "pink sandstone",
+                    "laterite",
+                    "brick",
+                    "thmaphom",
+                    "other")
+
+inclusion_prob_df <- data.frame(variable = model_names,
+                                description = variable_names,
+                                include_prob = round(post_inclusion_probs, 2))
+
+write.csv(inclusion_prob_df, 
+            file = "Output/variable_inclusion.csv")
 
 # handy function for excluding zeros
 rm_zeros <- function(x){
@@ -790,25 +909,10 @@ rm_zeros <- function(x){
 
 # mapping temple foundation events with chronological uncertainty
 
-opacity_fun <- function(x, from, to) {
-    d <- density(x,
-            bw = 50, 
-            from = from, 
-            to = to)
-    d$y <- d$y / max(d$y)
-    plot(d)
-    f <- approxfun(y = d$y, 
-                x = d$x,
-                yleft = 0,
-                yright = 0)
-    return(f)
-}
+predicted_dates_idx <- grep("temple_age", colnames(mcmc_out_predict))
+predicted_dates <- mcmc_out_predict[, predicted_dates_idx]
 
-myopacityfun <- opacity_fun(x = mcmc_out_predict$samples[, 1], from = 750, to = 1400)
-myopacityfun(1000)
-
-# maybe simpler.... but assumes normally distributed dating uncertainty, 
-# which is the case given the model, but could change if the model is changed
+# assumes normally distributed dating uncertainty
 
 opacity <- function(x, at){
     sigma <- sd(x)
@@ -823,56 +927,21 @@ opacity <- function(x, at){
     }
 }
 
-sample_years <- 750:1400
+sample_years <- 800:1400
 
-scaled_opacity <- opacity(x = mcmc_out_predict$samples[, 100], at = sample_years)
-plot(y = scaled_opacity, x = sample_years)
+# create an "opacity matrix"---i.e., get opacties for all temples
+opacity_matrix <- apply(predicted_dates, 2, opacity, at = sample_years)
 
-opacity_matrix <- apply(mcmc_out_predict$samples, 2, opacity, at = sample_years)
-
-# need to add back in temple coordinates
-#temple_coords <- data.frame(id = temple_vol$Temple.ID,
-#                    x = temple_vol$X,
-#                    y = temple_vol$Y)
-
-#temple_coords <- temple_coords[complete.cases(temple_coords), ] # some temples in the volumes spreadsheet have no id
-#temples_spatial <- left_join(temples_predict, temple_coords, by = "id")
-
-# evidently not all temples have coordinates, so we need to subset the dataframe and the opacity matrix in order to plot
+# not all temples have coordinates, so we need to subset the dataframe and the opacity matrix in order to plot
 # the following logical vector can be used to select from the dataframe (by rows) and opacity matrix (by columns)
 
-has_coords <- complete.cases(temples[, c("x", "y")])
-xys <- temples[has_coords, c("x", "y")]
+has_coords <- complete.cases(temples[, c("xlong", "ylat")])
+xys <- temples[has_coords, c("xlong", "ylat")]
 
-spdf_temples <- SpatialPointsDataFrame(coords = xys, data = temples[has_coords, ], 
-                                    proj4string = CRS("+proj=utm +zone=48 +datum=WGS84 +units=m +no_defs"))
+sp_temples <- SpatialPointsDataFrame(coords = xys, data = temples[has_coords, ], 
+                                    proj4string = CRS("+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"))
 
-spdf_temples_tr <- spTransform(spdf_temples, CRS("+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"))
-
-temporal_datum <- sample_years[100]
-
-current_opacity <- as.vector(opacity_matrix[10, has_coords])
-
-temple_age_means <- apply(mcmc_out_predict$samples, 2, mean)[has_coords]
-
-relative_temporal_indicator <- as.vector(temple_age_means >= temporal_datum)
-
-colour_idx <- relative_temporal_indicator + 1
-
-temporal_colour <- sapply(colour_idx, function(x)c("blue", "red")[x])
-
-m <- leaflet()
-m <- addTiles(m)
-
-m <- addCircles(m, 
-        data = spdf_temples_tr, 
-        opacity = current_opacity, 
-        color = temporal_colour)
-
-m
-
-
-# and now as a shiny app
+# a shiny app
 
 library(shiny)
 
@@ -914,7 +983,7 @@ server <- function(input, output, session) {
         m <- leaflet()
         m <- addTiles(m)
         m <- addCircles(m, 
-                data = spdf_temples_tr)
+                data = sp_temples)
         m
     })
 
@@ -922,7 +991,7 @@ server <- function(input, output, session) {
         p <- leafletProxy("AngkorTemples")
         p <- clearShapes(p)
         p <- addCircles(p, 
-                data = spdf_temples_tr, 
+                data = sp_temples, 
                 opacity = current_opacity(), 
                 color = current_colour())
         p

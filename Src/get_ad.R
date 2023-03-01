@@ -65,11 +65,11 @@ N <- nrow(temples_dated) # N obs.
 # this model is predicting temple ages with a set a covariates and uses 
 # temple morphology as an index variable (rather than one-hot encoding etc)
 templeCode <- nimbleCode({
-    beta0 ~ dnorm(1000, sd = 500)
-    sigma0 ~ dunif(0, 500) # prior variance for morpho types (index variable)
+    #beta0 ~ dnorm(1000, sd = 500)
+    #sigma0 ~ dunif(0, 500) # prior variance for morpho types (index variable)
     morpho_prob[1:M] ~ ddirch(alpha = d_alpha[1:M])
     for(m in 1:M){
-        morpho[m] ~ dnorm(beta0, sd = sigma0)
+        morpho[m] ~ dnorm(1000, sd = 200)#dnorm(beta0, sd = sigma0)
     }
     for(j in 1:J){
         beta[j] ~ dnorm(0, sd = 500) # regression coefs
@@ -110,8 +110,8 @@ templeData <- list(temple_age = temples_dated$date_emp,
                     x = x)
 
 templeInits <- list(theta = rep(0.5, H),
-                    beta0 = 1000,
-                    sigma0 = 200,
+                    #beta0 = 1000,
+                    #sigma0 = 200,
                     beta = rep(0, J),
                     morpho = rep(0, M),
                     sigma = 100)
@@ -122,8 +122,8 @@ templeModel <- nimbleModel(code = templeCode,
                 data = templeData,
                 inits = templeInits)
 
-params_to_track <- c("beta0",
-                    "sigma0",
+params_to_track <- c(#"beta0",
+                    #"sigma0",
                     "morpho", 
                     "morpho_prob", 
                     "beta", 
@@ -136,8 +136,8 @@ params_to_track <- c("beta0",
 # change default block sampling for beta[] and morpho[] to AF_slice
 templeModel_c <- compileNimble(templeModel)
 temple_mcmc_config <- configureMCMC(templeModel_c)
-temple_mcmc_config$removeSamplers(c("beta", "morpho"))
-temple_mcmc_config$addSampler(target = c("beta", "morpho"), type = "AF_slice")
+#temple_mcmc_config$removeSamplers(c("beta", "morpho"))
+#temple_mcmc_config$addSampler(target = c("beta", "morpho"), type = "AF_slice")
 temple_mcmc_config$setMonitors(params_to_track)
 
 # build mcmc
@@ -157,7 +157,7 @@ left_out_post_col <- grep(paste("mu\\[", left_out, "\\]", sep = ""),
 cv_abs_dev <- abs(left_out_date - mean(mcmc_out[, left_out_post_col]))
 
 write.table(cv_abs_dev, 
-            file = "Output/cv_abs_devs.csv", 
+            file = "Output/cv_abs_devs_2.csv", 
             append = T,
             row.names = F,
             col.names = F)
