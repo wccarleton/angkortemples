@@ -25,6 +25,16 @@ sheets
 temple_vars <- read_excel("./Data/20180416_Urban_Morphology_Tables1-3.xlsx", 
                     sheet = sheets[2])
 
+# warning message says there's a bad entry: Expecting numeric in F1047 / 
+# R1047C6: got '82.827-17' the cell reference doesn't account for column 
+# headers in the spreadsheet, which means the offending entry would be 
+# in row 1046 after import into R
+
+temple_vars[1046, ]
+
+# The value can be imputed like any other missing data so we'll leave the entry 
+# in with NA for the Azimuth
+
 # new dates from a new SI
 sheets <- excel_sheets("./Data/si_tables_updated.xlsx")
 temple_known_dates <- read_excel("./Data/si_tables_updated.xlsx", 
@@ -33,7 +43,10 @@ temple_known_dates <- read_excel("./Data/si_tables_updated.xlsx",
 # next, we need to subset the new SI table to extract only the columns with a 
 # Klassen ID because those are the ones for which we also have
 # predictor variables (the basis for modelled dates)
-temple_known_dates <- filter(temple_known_dates, Klassen_Temple_ID != 0)
+temple_known_dates <- subset(temple_known_dates, !is.na(Klassen_Temple_ID))
+
+# and again to get rid of the cases where Klassen_Temple_ID == 0
+temple_known_dates <- subset(temple_known_dates, Klassen_Temple_ID != 0)
 
 # isolate the relevant columns and rearrange them to my liking
 temple_known_dates <- temple_known_dates[, c(4, 1, 13, 14, 21, 22)]
@@ -51,23 +64,21 @@ temple_known_dates[date_type_ssl_idx, "DateType"] <- "graphbased"
 col_names <- c("id", "name", "date", "dating_notes", "xlong", "ylat", "date_type")
 names(temple_known_dates) <- col_names
 
+# at this point we have 1454 temples....
+
 # remove duplicated rows (duplicated on the basis of the Klassen ID column, 
 # but I noticed at least one case where a duplicate also had a different date),
 # so this has to be revisted...
 
 dups_idx <- duplicated(temple_known_dates$id)
 
+# 154 duplicates identified. The way R handles this is to identify duplicates
+# based on order of appearance from top to bottom and, so, if we drop the
+# duplicates, we are just getting rid of any rows with duplicated id's after a 
+# given entry---this is a fairly naive approach of course, but without 
+# additional information about the duplicates, it's the only way to proceed. 
+
 temple_known_dates <- temple_known_dates[!dups_idx, ]
-
-# warning message says there's a bad entry: Expecting numeric in F1047 / 
-# R1047C6: got '82.827-17' the cell reference doesn't account for column 
-# headers in the spreadsheet, which means the offending entry would be 
-# in row 1046 after import into R
-
-temple_vars[1046, ]
-
-# The value can be imputed like any other missing data so we'll leave the entry 
-# in with NA for the Azimuth
 
 # clean up the morphology column and simplify the names, removing special characters
 temple_vars[grep("(east)", temple_vars$Morphology), "Morphology"] <- "horseshoe_east"
@@ -94,9 +105,12 @@ t_vars <- data.frame(id = temple_vars$`Temple ID`,
 
 # join date and variable tables
 
-temples <- left_join(temple_known_dates, t_vars, by = "id")
+temples <- left_join(t_vars, temple_known_dates, by = "id")
 
-# pull in volumetric data
+# now that the temples data bases have been joined, we have many entries with
+# NA in the 'date_type' column. This is fine because these are undated temples
+
+# pull in coords
 
 temple_xy <- read.csv("./Data/qry-data.csv", as.is = T)
 
@@ -108,17 +122,9 @@ t_xy <- data.frame(id = temple_xy$Temple.ID,
 
 temples <- left_join(temples, t_xy, by = "id")
 
-# NOTE there is a bad azimuth entry in row 1239, so here we set it to NA
+# NOTE there is a bad azimuth entry in row 1239 (> 360), so here we set it to NA
 
 temples[1239, "azimuth"] <- NA
-
-# the principle dataset from here on is now the "temples" dataframe/tibble
-# write it as a csv so that I can switch scripts and clear the R workspace 
-# of intermediary variables created above while cleaning the data
-write.csv(temples, file = "./Data/temples.csv", row.names = F)
-
-#temples <- read.csv(file = "./Data/temples.csv")
-#temples$morph <- as.factor(temples$morph)
 
 # analysis
 
@@ -150,32 +156,35 @@ temples[empirically_dated_idx, "date_emp"] <- temples[empirically_dated_idx, "da
 # save the column idx for the new column
 date_idx <- grep("^date_emp$", names(temples))
 
+# the principle dataset from here on is now the "temples" dataframe/tibble
+# write it as a csv so that I can switch scripts and clear the R workspace 
+# of intermediary variables created above while cleaning the data
+write.csv(temples, file = "./Data/temples.csv", row.names = F)
+
 # subset only dated temples in order to compare the two approaches with 
 # cross-validation and mean absolute deviation
 
-temples_dated_allvars <- temples[which(!is.na(temples$date_emp)), ]
+temples_dated <- temples[which(!is.na(temples$date_emp)), ]
 
 # the models work with numeric data, so all tibble columns have 
 # to be converted. at the same time we can just select the relevant covariates
 # (i.e., excluding the coordinate columns, which aren't needed until much later)
 
-#x <- mutate(temples_complete[, covariate_idx], across(morph:trait_8, as.numeric))
-
-x <- mutate(temples_dated_allvars[, covariate_idx], 
+x <- mutate(temples_dated[, covariate_idx], 
             across(morph:trait_8, as.numeric))
 
 # it also can't be a tibble, so...
 
 x <- as.data.frame(x)
 
-date_emp <- temples_dated_allvars$date_emp
+date_emp <- temples_dated$date_emp
 
 temples_dated <- cbind(date_emp, x)
 
 ## First run the GSSL
 
 # some additional data wrangling required here to prepare the data for 
-# the GSSL analysis/algorithm
+# the GSSL analysis/algorithm, so copy the data here to avoid overwriting
 
 temples_dated_gssl <- temples_dated
 
@@ -341,11 +350,9 @@ write.table(cv_ad_gssl,
 
 # set up a Nimble model
 templeCode <- nimbleCode({
-    #beta0 ~ dnorm(1000, sd = 500)
-    #sigma0 ~ dunif(0, 200) # prior variance for morpho types (index variable)
     morpho_prob[1:M] ~ ddirch(alpha = d_alpha[1:M])
     for(m in 1:M){
-        morpho[m] ~ dnorm(0, sd = 1000)#dnorm(beta0, sd = sigma0)
+        morpho[m] ~ dnorm(0, sd = 1000)
     }
     for(j in 1:J){
         beta[j] ~ dnorm(0, sd = 500) # regression coefs
@@ -386,8 +393,6 @@ templeData <- list(temple_age = temples_dated$date_emp,
                     x = temples_dated[, -1])
 
 templeInits <- list(theta = rep(0.5, H),
-                    #beta0 = 1000,
-                    #sigma0 = 200,
                     beta = rep(0, J),
                     morpho = rep(0, M),
                     sigma = 100)
@@ -398,9 +403,7 @@ templeModel <- nimbleModel(code = templeCode,
                 data = templeData,
                 inits = templeInits)
 
-params_to_track <- c(#"beta0",
-                    #"sigma0",
-                    "morpho", 
+params_to_track <- c("morpho", 
                     "morpho_prob", 
                     "beta", 
                     "sigma", 
@@ -409,7 +412,7 @@ params_to_track <- c(#"beta0",
 
 # mcmc config options
 
-# change default block sampling for beta[] and morpho[] to AF_slice
+# change default block sampling for beta[] and morpho[] to AF_slice if desired
 templeModel_c <- compileNimble(templeModel)
 temple_mcmc_config <- configureMCMC(templeModel_c)
 #temple_mcmc_config$removeSamplers(c("beta0","beta","morpho"))
@@ -426,7 +429,7 @@ mcmc_out <- runMCMC(temple_mcmc_c,
                     niter = 50000,
                     nburnin = 0)
 
-plot(mcmc_out[,"morpho[1]"], type="l")
+plot(mcmc_out[,"morpho[4]"], type="l")
 
 # convergence checking
 nonparam_cols <- grep("mu|temple_age", colnames(mcmc_out))
@@ -454,7 +457,7 @@ if(any(abs(g$z) > 2)){
 # predicted temple date and compares that to the empirical date to derive 
 # the absolute deviation.
 
-for(j in 1:169){
+for(j in 1:dim(temples_dated)[1]){
     system2("Rscript", args=c("Src/get_ad.R", paste(j)))
 }
 

@@ -30,14 +30,6 @@ str_pattern <- paste("morph",
 
 covariate_idx <- grep(str_pattern, colnames(temples))
 
-# Create a column containing only the emprical dates with all other entries
-# NA. This will be useful for the code that follows because Nimble will
-# automatically impute/predict values for NA entries.
-
-empirically_dated_idx <- which(temples$date_type == "empirical")
-temples$date_emp <- NA
-temples[empirically_dated_idx, "date_emp"] <- temples[empirically_dated_idx, "date"]
-
 # save the column idx for the new column
 date_idx <- grep("^date_emp$", names(temples))
 
@@ -65,11 +57,9 @@ N <- nrow(temples_dated) # N obs.
 # this model is predicting temple ages with a set a covariates and uses 
 # temple morphology as an index variable (rather than one-hot encoding etc)
 templeCode <- nimbleCode({
-    #beta0 ~ dnorm(1000, sd = 500)
-    #sigma0 ~ dunif(0, 500) # prior variance for morpho types (index variable)
     morpho_prob[1:M] ~ ddirch(alpha = d_alpha[1:M])
     for(m in 1:M){
-        morpho[m] ~ dnorm(1000, sd = 200)#dnorm(beta0, sd = sigma0)
+        morpho[m] ~ dnorm(0, sd = 1000)
     }
     for(j in 1:J){
         beta[j] ~ dnorm(0, sd = 500) # regression coefs
@@ -110,8 +100,6 @@ templeData <- list(temple_age = temples_dated$date_emp,
                     x = x)
 
 templeInits <- list(theta = rep(0.5, H),
-                    #beta0 = 1000,
-                    #sigma0 = 200,
                     beta = rep(0, J),
                     morpho = rep(0, M),
                     sigma = 100)
@@ -122,9 +110,7 @@ templeModel <- nimbleModel(code = templeCode,
                 data = templeData,
                 inits = templeInits)
 
-params_to_track <- c(#"beta0",
-                    #"sigma0",
-                    "morpho", 
+params_to_track <- c("morpho", 
                     "morpho_prob", 
                     "beta", 
                     "sigma", 
@@ -133,7 +119,7 @@ params_to_track <- c(#"beta0",
 
 # mcmc config options
 
-# change default block sampling for beta[] and morpho[] to AF_slice
+# change default block sampling for beta[] and morpho[] to AF_slice if desired
 templeModel_c <- compileNimble(templeModel)
 temple_mcmc_config <- configureMCMC(templeModel_c)
 #temple_mcmc_config$removeSamplers(c("beta", "morpho"))
@@ -157,7 +143,7 @@ left_out_post_col <- grep(paste("mu\\[", left_out, "\\]", sep = ""),
 cv_abs_dev <- abs(left_out_date - mean(mcmc_out[, left_out_post_col]))
 
 write.table(cv_abs_dev, 
-            file = "Output/cv_abs_devs_2.csv", 
+            file = "Output/cv_abs_devs.csv", 
             append = T,
             row.names = F,
             col.names = F)
