@@ -59,7 +59,7 @@ N <- nrow(temples_dated) # N obs.
 templeCode <- nimbleCode({
     morpho_prob[1:M] ~ ddirch(alpha = d_alpha[1:M])
     for(m in 1:M){
-        morpho[m] ~ dnorm(0, sd = 1000)
+        morpho[m] ~ dnorm(1000, sd = 200)
     }
     for(j in 1:J){
         beta[j] ~ dnorm(0, sd = 500) # regression coefs

@@ -352,7 +352,7 @@ write.table(cv_ad_gssl,
 templeCode <- nimbleCode({
     morpho_prob[1:M] ~ ddirch(alpha = d_alpha[1:M])
     for(m in 1:M){
-        morpho[m] ~ dnorm(0, sd = 1000)
+        morpho[m] ~ dnorm(1000, sd = 200)
     }
     for(j in 1:J){
         beta[j] ~ dnorm(0, sd = 500) # regression coefs
@@ -415,8 +415,8 @@ params_to_track <- c("morpho",
 # change default block sampling for beta[] and morpho[] to AF_slice if desired
 templeModel_c <- compileNimble(templeModel)
 temple_mcmc_config <- configureMCMC(templeModel_c)
-#temple_mcmc_config$removeSamplers(c("beta0","beta","morpho"))
-#temple_mcmc_config$addSampler(target = c("beta0", "beta", "morpho"), type = "AF_slice")
+#temple_mcmc_config$removeSamplers(c("beta","morpho"))
+#temple_mcmc_config$addSampler(target = c("beta", "morpho"), type = "AF_slice")
 temple_mcmc_config$setMonitors(params_to_track)
 
 # build mcmc
@@ -429,7 +429,7 @@ mcmc_out <- runMCMC(temple_mcmc_c,
                     niter = 50000,
                     nburnin = 0)
 
-plot(mcmc_out[,"morpho[4]"], type="l")
+plot(mcmc_out[, "morpho[4]"], type="l")
 
 # convergence checking
 nonparam_cols <- grep("mu|temple_age", colnames(mcmc_out))
@@ -461,16 +461,61 @@ for(j in 1:dim(temples_dated)[1]){
     system2("Rscript", args=c("Src/get_ad.R", paste(j)))
 }
 
-cv_ad_bayes <- read.csv("Output/cv_abs_devs_2.csv", head = F)[, 1]
+## Now run the GLM to be merged with both methods for comparison
+# need complete cases only to fit the model
+temples_complete_idx <- complete.cases(temples_dated)
+temples_complete <- temples_dated[temples_complete_idx, ]
+
+# set the T/F columns to numeric
+x <- mutate(temples_complete[, covariate_idx[-1]], 
+            across(trait_1:trait_8, as.numeric))
+x <- as.data.frame(x)
+
+temples_complete <- cbind(temples_complete[, c("date_emp", "morph")],
+                        x)
+
+head(temples_complete)
+
+temples_glm <- glm(date_emp ~ 
+                    morph +
+                    azimuth +
+                    log(area) +
+                    trait_1 +
+                    trait_2 +
+                    trait_3 +
+                    trait_4 +
+                    trait_5 +
+                    trait_6 +
+                    # trait_7 is all zeros in this dataset
+                    trait_8,
+                    data = temples_complete)
+
+ad_glm <- abs(residuals(temples_glm))
+
+cv_ad_bayes <- read.csv("Output/cv_abs_devs.csv", head = F)[, 1]
 cv_ad_bayes <- data.frame(deviation_years = cv_ad_bayes, model = "bayesian")
 
 cv_ad_gssl <- read.csv("Output/cv_abs_devs_gssl.csv", head = F)[, 1]
 cv_ad_gssl <- data.frame(deviation_years = cv_ad_gssl, model = "gssl")
 
+# hybridize results with glm
+# get the idx of the complete cases in the temples_dated dataframe
+
+ad_hybrid_bayes <- cv_ad_bayes
+ad_hybrid_bayes$model = "bayesian_hybrid"
+ad_hybrid_bayes[temples_complete_idx, "deviation_years"] <- ad_glm
+
+ad_hybrid_gssl <- cv_ad_gssl
+ad_hybrid_gssl$model = "gssl_hybrid"
+ad_hybrid_gssl[temples_complete_idx, "deviation_years"] <- ad_glm
+
 # create a long-format dataframe with the cross-validation-derived absolute
 # deviations from each of the two approaches.
 
-ad_both <- rbind(cv_ad_bayes, cv_ad_gssl)
+ad_both <- rbind(cv_ad_bayes, 
+            cv_ad_gssl, 
+            ad_hybrid_bayes, 
+            ad_hybrid_gssl)
 ad_both[, 1] <- round(as.numeric(ad_both[, 1]), 0)
 names(ad_both) <- c("deviation_years", "model")
 
@@ -492,6 +537,27 @@ plt_cv_compared
 ggsave(filename = "Output/cv_ad_compared.pdf", 
         device = "pdf")
 
+# plot absolute deviations for each model against known foundation
+# date to evaluate how predictive accuracy might change with true
+# foundation date
+deviation_compared_df <- subset(ad_both, 
+                            model == "gssl_hybrid" | model == "bayesian")
+deviation_compared_df$true_date <- temples_dated$date_emp
+
+plt_deviation_true <- ggplot(data = deviation_compared_df) +
+    geom_point(mapping = aes(x = true_date, 
+                            y = deviation_years, 
+                            colour = model),
+                size = 5) +
+    labs(x = "Emprical Foundation Date", 
+        y = "Absolute Deviation\nin Years",
+        title = "Deviation v. True Date") +
+    theme_minimal(base_size = 20)
+plt_deviation_true
+
+ggsave(filename = "Output/deviation_v_year.pdf", 
+        device = "pdf")
+
 # have a look at temple counts per period 
 # in one plot, show the series using the GSSL labels, and in the other show the
 # series from the Bayesian model including dating uncertainties
@@ -505,8 +571,20 @@ date_emp <- temples$date_emp
 # GSSL
 temples_gssl <- cbind(date_emp, x)
 
-# next, identify the categorical and continuous data columns because GSSL
-# treats these types differently
+# before going on, get idx locations of temples for which the GSSL date
+# will be replaced with a GLM date. these are cases where there is no 
+# empirical date but also no missing predictors
+
+hybrid_glm_idx <- which(is.na(temples_gssl$date_emp) & 
+                    complete.cases(temples_gssl[, -1]))
+
+# get the glm predictions----must be done before the temples_gssl dataset
+# is modified for use in the gssl procedure
+glm_dates <- predict(temples_glm, newdata = temples_gssl[hybrid_glm_idx, ])
+
+# Now back to the GSSL model
+# as before, identify the categorical and continuous data columns because GSSL
+# treats these types differently for imputation and distance metric
 
 cont_idx <- grep("azimuth|area", colnames(temples_gssl))
 cat_idx <- setdiff(1:ncol(temples_gssl), cont_idx)[-1]
@@ -532,12 +610,19 @@ temples_gssl[na_idx, "azimuth"] <- 0.5
 na_idx <- which(is.na(temples_gssl[, "area"]))
 temples_gssl[na_idx, "area"] <- 0.5
 
-
 # now, run the gssl and extract the temple foundation date estimates
 
 gssl_dates <- propagate_labels(x = temples_gssl,
                                 cat_idx = cat_idx,
                                 cont_idx = cont_idx)
+
+# hybridize the GSSL with the GLM predictions
+# now insert the glm predicted dates into the vector at the appropriate 
+# locations to replace the corresponding gssl estimates for temples with no 
+# missing predictor values
+
+gssl_dates_hybrid <- as.vector(gssl_dates$labels)
+gssl_dates_hybrid[hybrid_glm_idx] <- glm_dates
 
 # Bayesian model
 # run the model again including all the data, not just the dated temples that 
@@ -601,13 +686,19 @@ temple_mcmc_c <- compileNimble(temple_mcmc)
 # run mcmc
 
 mcmc_out_predict <- runMCMC(temple_mcmc_c, 
-                    niter = 50000)
+                    niter = 50000,
+                    nburnin = 10000)
 
 # Next, take the MCMC samples for the predicted temple foundation dates and 
 # bin them (count temple foundations per period) for each MCMC iteration.
 
-temple_age_idx <- grep("temple_age", colnames(mcmc_out))
-temple_age_samples <- mcmc_out[, temple_age_idx]
+temple_age_idx <- grep("temple_age", colnames(mcmc_out_predict))
+temple_age_samples <- mcmc_out_predict[, temple_age_idx]
+
+# choose the parameters for the temporal binning
+datum <- 700
+delta <- 100
+nbins <- 7
 
 # create a container for the counts---each row will refer to one temporal bin,
 # while each column will contain one probable count sequence of temple
@@ -630,12 +721,6 @@ period_counts <- function(x,
 }
 
 # plot results of both models
-
-# choose the parameters for the temporal binning
-datum <- 700
-delta <- 100
-nbins <- 7
-
 # loop over the rows (MCMC iterations) of the temple_age_samples matrix and 
 # then store the counts
 for(j in 1:nrow(temple_age_samples)){
@@ -645,7 +730,7 @@ for(j in 1:nrow(temple_age_samples)){
                                         nbins = nbins)
 }
 
-temple_counts_gssl <- period_counts(x = as.vector(gssl_dates$labels),
+temple_counts_gssl <- period_counts(x = gssl_dates_hybrid,
                                     datum = datum,
                                     delta = delta,
                                     nbins = nbins)
@@ -666,29 +751,54 @@ count_samples_long <- pivot_longer(count_samples_df,
 
 count_samples_long$gssl_count <- rep(temple_counts_gssl, dim(temple_counts)[1])
 
+# get mean values to plot line over the boxes as well
+median_counts <- data.frame(period = periods,
+                            bayes_med = apply(count_samples_df, 2, median),
+                            gssl_val = temple_counts_gssl)
+
 plt_count <- ggplot() +
     geom_boxplot(data = count_samples_long, 
-            mapping = aes(x = period, y = bayes_count),
+            mapping = aes(x = period, 
+                        y = bayes_count),
             fill = "#008100",
             colour = "black",
             outlier.shape = 1,
             alpha = 0.75) +
+    geom_line(data = median_counts,
+            mapping = aes(x = period, 
+                        y = bayes_med, 
+                        colour = "Bayes"),
+            linewidth = 2,
+            alpha = 0.75) +
     geom_boxplot(data = count_samples_long,
-            mapping = aes(x = period, y = gssl_count),
-            colour = "#a5eca5",
+            mapping = aes(x = period, 
+                        y = gssl_count),
+            colour = "steelblue",
             alpha = 0.75,
             size = 2) +
+    geom_line(data = median_counts,
+            mapping = aes(x = period, 
+                        y = gssl_val, 
+                        colour = "GSSL"),
+            linewidth = 2,
+            alpha = 0.75) +
     scale_x_discrete(labels = period_labs) +
+    scale_colour_manual("Model",
+            breaks = c("GSSL", "Bayes"),
+            values = c("GSSL" = "steelblue", "Bayes" = "#008100")) +
     labs(title = "Temple Counts per Period",
-        y = "count",
+        y = "Count",
         x = "Period Midpoints in Years CE") +
     theme_minimal(base_size = 20) +
     theme(plot.title = element_text(hjust = 0.5))
 plt_count
 
 ggsave(filename = "Output/AngkorTemples_counts.pdf", 
+        height = 10,
+        width = 15,
+        units = "cm",
+        scale = 3,
         device = "pdf")
-
 
 # Variable selection
 
@@ -836,8 +946,6 @@ templeData <- list(temple_age = temples_dated$date_emp,
                     x = x)
 
 templeInits <- list(theta = rep(0.5, H),
-                    beta0 = 1000,
-                    sigma0 = 200,
                     beta = rep(0, J),
                     morpho = rep(0, M),
                     sigma = 100)
@@ -848,9 +956,7 @@ templeModel <- nimbleModel(code = templeCode,
                 data = templeData,
                 inits = templeInits)
 
-params_to_track <- c(#"beta0",
-                    #"sigma0",
-                    "morpho", 
+params_to_track <- c("morpho", 
                     "morpho_prob", 
                     "beta", 
                     "sigma")
@@ -915,12 +1021,17 @@ rm_zeros <- function(x){
 predicted_dates_idx <- grep("temple_age", colnames(mcmc_out_predict))
 predicted_dates <- mcmc_out_predict[, predicted_dates_idx]
 
+temple_age_means <- apply(predicted_dates, 2, mean)
+
 # assumes normally distributed dating uncertainty
 
 opacity <- function(x, at){
     sigma <- sd(x)
     if(sigma == 0){
-        return(rep(1, length(at)))
+        d <- at / mean(x)
+        d <- as.numeric(d == 1)
+        return(d)
+        #return(rep(1, length(at)))
     } else {
         mu <- mean(x)
         d <- dnorm(x = at, 
@@ -930,7 +1041,7 @@ opacity <- function(x, at){
     }
 }
 
-sample_years <- 800:1400
+sample_years <- 700:1400
 
 # create an "opacity matrix"---i.e., get opacties for all temples
 opacity_matrix <- apply(predicted_dates, 2, opacity, at = sample_years)
