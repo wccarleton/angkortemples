@@ -412,11 +412,9 @@ params_to_track <- c("morpho",
 
 # mcmc config options
 
-# change default block sampling for beta[] and morpho[] to AF_slice if desired
+# change default block sampling if desired
 templeModel_c <- compileNimble(templeModel)
 temple_mcmc_config <- configureMCMC(templeModel_c)
-#temple_mcmc_config$removeSamplers(c("beta","morpho"))
-#temple_mcmc_config$addSampler(target = c("beta", "morpho"), type = "AF_slice")
 temple_mcmc_config$setMonitors(params_to_track)
 
 # build mcmc
@@ -862,8 +860,6 @@ gg_posterior_contrasts <- function(data, mapping, ...){
             #fill = "transparent",
             binwidth = bw)
 }
-
-#hist(apply(mcmc_out[, morpho_idx[c(1, 6)]], 1,diff))
 
 morpho_type_df <- as.data.frame(mcmc_out[, morpho_idx])
 

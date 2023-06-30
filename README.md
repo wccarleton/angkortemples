@@ -2,9 +2,10 @@
 ## Overview
 This repo contains the data and code used for the study presented in the following paper:
 
-[*PAPER TITLE*]()
+[*Bayes against the Machine: competing Bayesian regression against graph-based machine learning for estimating unknown temple foundation dates at Angkor*]()
 
 ## Abstract
+The paper describing the anlayses conducted with the code in this repo has been submitted for review and this page will be upadated with more details once the paper has been accepted for publication. This repo is, therefore, likely to be changed in response to reviewer comments.
 
 ## Software
 The R scripts contained in this repository are intended for replication efforts and to improve the transparency of research. They are, of course, provided without warranty or technical support. That said, questions about the code can be directed to me, Chris Carleton, at ccarleton@protonmail.com.
