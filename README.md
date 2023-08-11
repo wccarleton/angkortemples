@@ -1,4 +1,6 @@
 # Project
+[![DOI](https://zenodo.org/badge/560830491.svg)](https://zenodo.org/badge/latestdoi/560830491)
+
 ## Overview
 This repo contains the data and code used for the study presented in the following paper:
 
